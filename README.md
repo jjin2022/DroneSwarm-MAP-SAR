@@ -1,6 +1,6 @@
 ## Spinther Robotics
 
-> Tagline: "One spark. Every search."
+> Tagline: "One spark. Every search." | One-liner: "Autonomous scouts for the world’s riskiest terrain"
 
 ## Legged-Aerial Swarm
 
