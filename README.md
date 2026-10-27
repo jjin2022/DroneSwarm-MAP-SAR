@@ -1,6 +1,8 @@
-# Legged-Aerial Swarm
+## Spinther Robotics
+## Legged-Aerial Swarm
 
-> A quadruped "mothership" that carries, docks, charges, and relays for a team of small drones, with shared SLAM for GPS-denied mapping, search and rescue (SAR), and reconnaissance.
+> Tagline: "One spark. Every search."
+> A quadruped "mothership" that carries, docks, charges, and relays for a team of small drones, with shared SLAM for GPS-denied mapping, search and rescue (SAR), and reconnaissance. 
 
 **Status:** Pre-alpha / design phase
 **Visibility:** Private repository
