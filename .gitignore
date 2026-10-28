@@ -1,0 +1,32 @@
+# ROS 2 / colcon build output
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+
+# Secrets and local config (never commit these)
+.env
+*.pem
+*.key
+secrets/
+
+# Large data (use a separate storage solution)
+*.bag
+*.mcap
+*.db3
+maps/
+datasets/
+recordings/
+
+# Third-party code cloned separately
+PX4-Autopilot/
