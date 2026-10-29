@@ -19,6 +19,7 @@ setup(
     entry_points={
         'console_scripts': [
             'takeoff_land = las_offboard.takeoff_land:main',
+            'patrol_rtl = las_offboard.patrol_rtl:main',
         ],
     },
 )
