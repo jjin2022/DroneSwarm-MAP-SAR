@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>las_offboard</name>
+  <version>0.0.1</version>
+  <description>LAS offboard takeoff and land demo for PX4</description>
+  <maintainer email="jonathanzyjin@gmail.com">jjin2022</maintainer>
+  <license>Proprietary</license>
+  <depend>rclpy</depend>
+  <depend>px4_msgs</depend>
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
