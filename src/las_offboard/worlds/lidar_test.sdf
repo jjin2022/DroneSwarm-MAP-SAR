@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  lidar_test.sdf - A Gazebo world with obstacles for testing the 2D LIDAR.
+
+  It is a copy of PX4's default.sdf (same physics, lighting, ground and GPS
+  origin) with a few static obstacles added at the bottom of the file.
+
+  HOW TO USE IT
+    PX4 only looks for worlds in ~/dev/PX4-Autopilot/Tools/simulation/gz/worlds,
+    so link this file there once:
+      ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/worlds/lidar_test.sdf \
+            ~/dev/PX4-Autopilot/Tools/simulation/gz/worlds/lidar_test.sdf
+    then start PX4 with:
+      PX4_GZ_WORLD=lidar_test make px4_sitl gz_x500_lidar_2d
+
+  COORDINATES (Gazebo uses ENU: x = East, y = North, z = Up, metres)
+    The drone spawns at (0, 0) with its nose pointing along +x (East).
+    So from the drone's point of view: +x is FRONT, +y is LEFT, -y is RIGHT.
+    The lidar sits roughly 0.3-0.4 m above the ground and scans flat, so every
+    obstacle is made 3 m tall: it is seen both on the ground and while hovering.
+
+  ADDING YOUR OWN OBSTACLE
+    Copy one <model> block below, give it a unique name, and change:
+      <pose>x y z roll pitch yaw</pose>   - where it is (z = half its height
+                                            so it sits on the ground)
+      <size>/<radius>/<length>            - how big it is (in BOTH collision
+                                            and visual - the LIDAR only sees
+                                            the <collision> shape)
+      <static>true</static>               - true = fixed in place, no physics
+-->
+<sdf version="1.9">
+  <world name="lidar_test">
+    <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+    <scene>
+      <grid>false</grid>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>true</shadows>
+    </scene>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>1 1</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode/>
+            </friction>
+            <bounce/>
+            <contact/>
+          </surface>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>500 500</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+            <specular>0.8 0.8 0.8 1</specular>
+          </material>
+        </visual>
+        <pose>0 0 0 0 -0 0</pose>
+        <inertial>
+          <pose>0 0 0 0 -0 0</pose>
+          <mass>1</mass>
+          <inertia>
+            <ixx>1</ixx>
+            <ixy>0</ixy>
+            <ixz>0</ixz>
+            <iyy>1</iyy>
+            <iyz>0</iyz>
+            <izz>1</izz>
+          </inertia>
+        </inertial>
+        <enable_wind>false</enable_wind>
+      </link>
+      <pose>0 0 0 0 -0 0</pose>
+      <self_collide>false</self_collide>
+    </model>
+    <light name="sunUTC" type="directional">
+      <pose>0 0 500 0 -0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0.001 0.625 -0.78</direction>
+      <diffuse>0.904 0.904 0.904 1</diffuse>
+      <specular>0.271 0.271 0.271 1</specular>
+      <attenuation>
+        <range>2000</range>
+        <linear>0</linear>
+        <constant>1</constant>
+        <quadratic>0</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg> 8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+    </spherical_coordinates>
+
+    <!-- ================= LIDAR TEST OBSTACLES ================= -->
+
+    <!-- Red wall 5 m in FRONT of the drone, 6 m wide -->
+    <model name="wall_front">
+      <static>true</static>
+      <pose>5 0 1.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.3 6 3</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.3 6 3</size></box></geometry>
+          <material><ambient>0.8 0.2 0.2 1</ambient><diffuse>0.8 0.2 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Blue pillar 3 m to the LEFT (radius 0.3 m) -->
+    <model name="pillar_left">
+      <static>true</static>
+      <pose>0 3 1.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.3</radius><length>3</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>0.3</radius><length>3</length></cylinder></geometry>
+          <material><ambient>0.2 0.6 0.9 1</ambient><diffuse>0.2 0.6 0.9 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Green 1 m crate 2 m to the RIGHT, slightly ahead -->
+    <model name="crate_right">
+      <static>true</static>
+      <pose>1.5 -2 1.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>1 1 3</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>1 1 3</size></box></geometry>
+          <material><ambient>0.2 0.7 0.2 1</ambient><diffuse>0.2 0.7 0.2 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Yellow wall far away (about 14 m, front-left) to test long range -->
+    <model name="wall_far_left">
+      <static>true</static>
+      <pose>10 10 1.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>6 0.3 3</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>6 0.3 3</size></box></geometry>
+          <material><ambient>0.9 0.7 0.1 1</ambient><diffuse>0.9 0.7 0.1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Purple post close behind-right (about 1.6 m at -130 deg, near the edge of the FOV) -->
+    <model name="close_box_back_right">
+      <static>true</static>
+      <pose>-1.0 -1.2 1.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.5 0.5 3</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.5 0.5 3</size></box></geometry>
+          <material><ambient>0.6 0.3 0.8 1</ambient><diffuse>0.6 0.3 0.8 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+    <!-- ======================================================== -->
+  </world>
+</sdf>

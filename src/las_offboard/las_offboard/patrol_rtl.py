@@ -34,10 +34,13 @@ class PatrolRtl(Node):
         self.size = p('patrol_size_m', 10.0).value
         self.return_batt = p('return_battery', 0.35).value   # 0..1
         self.tol = p('reach_tolerance_m', 0.5).value
-        status_topic = p('status_topic', '/fmu/out/vehicle_status_v1').value
-        pos_topic = p('local_position_topic', '/fmu/out/vehicle_local_position_v1').value
-        batt_topic = p('battery_topic', '/fmu/out/battery_status_v1').value
-        land_topic = p('land_detected_topic', '/fmu/out/vehicle_land_detected').value
+        # MAVLink system ID of the vehicle; 0 = take it from VehicleStatus.
+        self.target_system = p('target_system', 0).value
+        # Topics are relative so a namespace (e.g. -r __ns:=/px4_1) picks the vehicle.
+        status_topic = p('status_topic', 'fmu/out/vehicle_status_v1').value
+        pos_topic = p('local_position_topic', 'fmu/out/vehicle_local_position_v1').value
+        batt_topic = p('battery_topic', 'fmu/out/battery_status_v1').value
+        land_topic = p('land_detected_topic', 'fmu/out/vehicle_land_detected').value
 
         qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -47,11 +50,11 @@ class PatrolRtl(Node):
         )
 
         self.mode_pub = self.create_publisher(
-            OffboardControlMode, '/fmu/in/offboard_control_mode', qos)
+            OffboardControlMode, 'fmu/in/offboard_control_mode', qos)
         self.setpoint_pub = self.create_publisher(
-            TrajectorySetpoint, '/fmu/in/trajectory_setpoint', qos)
+            TrajectorySetpoint, 'fmu/in/trajectory_setpoint', qos)
         self.cmd_pub = self.create_publisher(
-            VehicleCommand, '/fmu/in/vehicle_command', qos)
+            VehicleCommand, 'fmu/in/vehicle_command', qos)
 
         self.create_subscription(VehicleStatus, status_topic, self.on_status, qos)
         self.create_subscription(VehicleLocalPosition, pos_topic, self.on_pos, qos)
@@ -88,6 +91,9 @@ class PatrolRtl(Node):
 
     def on_status(self, msg):
         self.status = msg
+        if self.target_system == 0:
+            self.target_system = msg.system_id
+            self.get_logger().info(f'Commanding MAVLink system {self.target_system}')
 
     def on_pos(self, msg):
         self.pos = msg
@@ -173,7 +179,7 @@ class PatrolRtl(Node):
         msg.command = command
         msg.param1 = float(param1)
         msg.param2 = float(param2)
-        msg.target_system = 1
+        msg.target_system = self.target_system
         msg.target_component = 1
         msg.source_system = 1
         msg.source_component = 1
@@ -204,15 +210,19 @@ class PatrolRtl(Node):
         getattr(self, 'step_' + self.state.lower())()
 
         # Offboard needs a continuous stream of heartbeats and setpoints.
-        if self.state in STREAMING_STATES and self.target is not None:
+        # Keep streaming in LAND until PX4 confirms AUTO_LAND, so a dropped land
+        # command doesn't leave us in offboard with no signal.
+        streaming = (self.state in STREAMING_STATES or
+                     (self.state == 'LAND' and not self.land_confirmed))
+        if streaming and self.target is not None:
             self.publish_heartbeat()
             self.publish_setpoint(*self.target)
 
     def step_wait_for_px4(self):
-        if self.status is not None and self.pos_ok():
+        if self.status is not None and self.pos_ok() and self.batt is not None:
             self.set_state('PREFLIGHT')
         else:
-            self.get_logger().info('Waiting for PX4 status and local position...',
+            self.get_logger().info('Waiting for PX4 status, local position and battery...',
                                    throttle_duration_sec=5.0)
 
     def step_preflight(self):

@@ -1,3 +1,5 @@
+from glob import glob
+
 from setuptools import find_packages, setup
 
 package_name = 'las_offboard'
@@ -9,6 +11,10 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        # Install launch files and Gazebo worlds so `ros2 launch` and
+        # get_package_share_directory('las_offboard') can find them.
+        ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
+        ('share/' + package_name + '/worlds', glob('worlds/*.sdf')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -20,6 +26,7 @@ setup(
         'console_scripts': [
             'takeoff_land = las_offboard.takeoff_land:main',
             'patrol_rtl = las_offboard.patrol_rtl:main',
+            'lidar_test = las_offboard.lidar_test:main',
         ],
     },
 )
