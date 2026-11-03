@@ -8,6 +8,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+*.egg-info/
 
 # Editor and OS
 .vscode/
@@ -27,6 +28,10 @@ secrets/
 maps/
 datasets/
 recordings/
+# patrol_lidar maps saved outside recordings/ (lidar_map_<time>.pgm/.yaml/_objects.csv)
+lidar_map_*
+# PX4 flight logs
+*.ulg
 
 # Third-party code cloned separately
 PX4-Autopilot/
