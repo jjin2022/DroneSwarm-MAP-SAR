@@ -16,8 +16,10 @@
   COORDINATES (Gazebo uses ENU: x = East, y = North, z = Up, metres)
     The drone spawns at (0, 0) with its nose pointing along +x (East).
     So from the drone's point of view: +x is FRONT, +y is LEFT, -y is RIGHT.
-    The lidar sits roughly 0.3-0.4 m above the ground and scans flat, so every
-    obstacle is made 3 m tall: it is seen both on the ground and while hovering.
+    The lidar sits roughly 0.3-0.4 m above the drone and scans flat, so it only
+    sees an obstacle while flying LOWER than the obstacle. These are 3 m tall:
+    seen on the ground and below ~2.5 m altitude, invisible at the 5 m default
+    altitude of takeoff_land / patrol_rtl (use -p altitude_m:=2.0).
 
   ADDING YOUR OWN OBSTACLE
     Copy one <model> block below, give it a unique name, and change:

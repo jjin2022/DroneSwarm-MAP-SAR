@@ -8,6 +8,9 @@ States:
 
 Home is the local (NED) position where the drone sits before arming, so this works
 without GPS as long as PX4 has a valid local position estimate.
+
+Coordinate note: PX4 local frame is NED (North-East-Down), so z is NEGATIVE when
+the drone is above home. "Climb to altitude_m" means target z = home_z - altitude_m.
 """
 import math
 
@@ -19,9 +22,18 @@ from px4_msgs.msg import (OffboardControlMode, TrajectorySetpoint, VehicleComman
                           VehicleStatus, VehicleLocalPosition, BatteryStatus,
                           VehicleLandDetected)
 
+# Control loop rate. PX4 requires offboard heartbeats faster than 2 Hz or it
+# drops out of offboard mode, so 10 Hz leaves plenty of margin.
 RATE_HZ = 10
+# NaN in a TrajectorySetpoint field tells PX4 "don't control this", so only
+# the position fields we fill in are used.
 NAN = float('nan')
+# States where the drone is in the air under our control; the safety checks in
+# on_timer() (still in offboard? position still valid?) apply to these.
 FLYING_STATES = ('TAKEOFF', 'PATROL', 'RETURN')
+# States where we must keep streaming heartbeat + setpoint. PREFLIGHT and
+# ARMING are included because PX4 refuses to switch into offboard unless
+# setpoints are already arriving.
 STREAMING_STATES = ('PREFLIGHT', 'ARMING') + FLYING_STATES
 
 
@@ -29,11 +41,12 @@ class PatrolRtl(Node):
     def __init__(self):
         super().__init__('patrol_rtl')
 
+        # ---------- parameters (override with --ros-args -p name:=value) ----------
         p = self.declare_parameter
-        self.alt = p('altitude_m', 5.0).value
-        self.size = p('patrol_size_m', 10.0).value
+        self.alt = p('altitude_m', 5.0).value              # patrol height above home
+        self.size = p('patrol_size_m', 10.0).value         # side length of the square
         self.return_batt = p('return_battery', 0.35).value   # 0..1
-        self.tol = p('reach_tolerance_m', 0.5).value
+        self.tol = p('reach_tolerance_m', 0.5).value       # "arrived" radius, h and v
         # MAVLink system ID of the vehicle; 0 = take it from VehicleStatus.
         self.target_system = p('target_system', 0).value
         # Topics are relative so a namespace (e.g. -r __ns:=/px4_1) picks the vehicle.
@@ -42,6 +55,8 @@ class PatrolRtl(Node):
         batt_topic = p('battery_topic', 'fmu/out/battery_status_v1').value
         land_topic = p('land_detected_topic', 'fmu/out/vehicle_land_detected').value
 
+        # QoS that matches what the PX4 uXRCE-DDS bridge uses. With mismatched QoS
+        # (e.g. RELIABLE subscriber vs BEST_EFFORT publisher) no messages arrive.
         qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -49,36 +64,43 @@ class PatrolRtl(Node):
             depth=1,
         )
 
+        # ---------- outputs to PX4 ----------
+        # offboard_control_mode: heartbeat saying which setpoint type we control.
         self.mode_pub = self.create_publisher(
             OffboardControlMode, 'fmu/in/offboard_control_mode', qos)
+        # trajectory_setpoint: the actual position target.
         self.setpoint_pub = self.create_publisher(
             TrajectorySetpoint, 'fmu/in/trajectory_setpoint', qos)
+        # vehicle_command: one-shot commands (arm, set mode, land, set home).
         self.cmd_pub = self.create_publisher(
             VehicleCommand, 'fmu/in/vehicle_command', qos)
 
+        # ---------- inputs from PX4 ----------
         self.create_subscription(VehicleStatus, status_topic, self.on_status, qos)
         self.create_subscription(VehicleLocalPosition, pos_topic, self.on_pos, qos)
         self.create_subscription(BatteryStatus, batt_topic, self.on_batt, qos)
         self.create_subscription(VehicleLandDetected, land_topic, self.on_land, qos)
 
+        # Latest message from each topic, plus receive time for staleness checks.
         self.status = None
         self.pos = None
         self.pos_time = None
         self.batt = None
         self.batt_time = None
-        self.landed = True
+        self.landed = True      # assume on the ground until PX4 says otherwise
 
+        # ---------- state machine bookkeeping ----------
         self.state = 'WAIT_FOR_PX4'
-        self.state_ticks = 0
-        self.tries = 0
-        self.hold_ticks = 0
-        self.land_confirmed = False
+        self.state_ticks = 0    # timer ticks spent in the current state
+        self.tries = 0          # command retries in the current state
+        self.hold_ticks = 0     # consecutive ticks spent at the target (RETURN)
+        self.land_confirmed = False   # PX4 has switched to AUTO_LAND
         self.home = None        # (x, y, z, yaw) in local NED
         self.target = None      # (x, y, z) currently streamed
-        self.waypoints = []
-        self.wp_index = 0
+        self.waypoints = []     # the four corners of the patrol square
+        self.wp_index = 0       # which corner we're heading to
         self.laps = 0
-        self.done = False
+        self.done = False       # tells main() to exit
 
         self.timer = self.create_timer(1.0 / RATE_HZ, self.on_timer)
         self.get_logger().info(
@@ -87,10 +109,13 @@ class PatrolRtl(Node):
 
     # ---------- subscriptions ----------
     def now_s(self):
+        """ROS clock time in seconds (sim time if use_sim_time is set)."""
         return self.get_clock().now().nanoseconds * 1e-9
 
     def on_status(self, msg):
         self.status = msg
+        # Auto-detect which vehicle to command from the first status message.
+        # Matters in multi-vehicle sims where each PX4 has its own system ID.
         if self.target_system == 0:
             self.target_system = msg.system_id
             self.get_logger().info(f'Commanding MAVLink system {self.target_system}')
@@ -108,6 +133,7 @@ class PatrolRtl(Node):
 
     # ---------- helpers ----------
     def now_us(self):
+        """Timestamp in microseconds, the unit PX4 messages use."""
         return int(self.get_clock().now().nanoseconds / 1000)
 
     def armed(self):
@@ -115,39 +141,50 @@ class PatrolRtl(Node):
                 self.status.arming_state == VehicleStatus.ARMING_STATE_ARMED)
 
     def nav_state(self):
+        """PX4's current flight mode (OFFBOARD, AUTO_LAND, AUTO_RTL, ...)."""
         return None if self.status is None else self.status.nav_state
 
     def in_offboard(self):
         return self.nav_state() == VehicleStatus.NAVIGATION_STATE_OFFBOARD
 
     def pos_ok(self):
+        """True if we have a valid local position estimate newer than 0.5 s."""
         return (self.pos is not None and self.pos.xy_valid and self.pos.z_valid
                 and self.now_s() - self.pos_time < 0.5)
 
     def battery_low(self):
+        """True if we should go home.
+
+        Fails safe: missing, stale (>2 s), disconnected or invalid battery data
+        all count as low, so we never keep patrolling blind.
+        """
         if self.batt is None or self.now_s() - self.batt_time > 2.0:
             self.get_logger().warn('No recent battery data', throttle_duration_sec=5.0)
             return True
-        r = self.batt.remaining
+        r = self.batt.remaining   # fraction 0..1; PX4 reports -1 when unknown
         if not self.batt.connected or r < 0.0 or math.isnan(r):
             self.get_logger().warn('Battery state unknown', throttle_duration_sec=5.0)
             return True
         return r <= self.return_batt
 
     def batt_str(self):
+        """Battery percentage for log messages."""
         return 'unknown' if self.batt is None else f'{self.batt.remaining:.0%}'
 
     def dist_to(self, target):
+        """(horizontal, vertical) distance from the drone to an (x, y, z) point."""
         dx = self.pos.x - target[0]
         dy = self.pos.y - target[1]
         dz = self.pos.z - target[2]
         return math.hypot(dx, dy), abs(dz)
 
     def reached(self, target):
+        """True when within reach_tolerance_m of target both horizontally and vertically."""
         horiz, vert = self.dist_to(target)
         return horiz < self.tol and vert < self.tol
 
     def set_state(self, new_state):
+        """Switch state, log the transition, and reset the per-state counters."""
         self.get_logger().info(f'{self.state} -> {new_state} (battery {self.batt_str()})')
         self.state = new_state
         self.state_ticks = 0
@@ -155,6 +192,7 @@ class PatrolRtl(Node):
         self.hold_ticks = 0
 
     def publish_heartbeat(self):
+        """Tell PX4 we're alive and controlling position (not velocity/attitude)."""
         msg = OffboardControlMode()
         msg.timestamp = self.now_us()
         msg.position = True
@@ -165,48 +203,56 @@ class PatrolRtl(Node):
         self.mode_pub.publish(msg)
 
     def publish_setpoint(self, x, y, z):
+        """Send a position target (local NED). Yaw is held at the heading from home."""
         msg = TrajectorySetpoint()
         msg.timestamp = self.now_us()
         msg.position = [float(x), float(y), float(z)]
-        msg.velocity = [NAN, NAN, NAN]
+        msg.velocity = [NAN, NAN, NAN]        # NaN = let PX4 work these out
         msg.acceleration = [NAN, NAN, NAN]
         msg.yaw = float(self.home[3]) if self.home else 0.0
         self.setpoint_pub.publish(msg)
 
     def send_command(self, command, param1=0.0, param2=0.0):
+        """Send a MAVLink-style VehicleCommand to the target vehicle's autopilot."""
         msg = VehicleCommand()
         msg.timestamp = self.now_us()
         msg.command = command
         msg.param1 = float(param1)
         msg.param2 = float(param2)
         msg.target_system = self.target_system
-        msg.target_component = 1
+        msg.target_component = 1      # 1 = the autopilot component
         msg.source_system = 1
         msg.source_component = 1
-        msg.from_external = True
+        msg.from_external = True      # mark it as coming from outside PX4
         self.cmd_pub.publish(msg)
 
     def begin_land(self):
+        """Ask PX4 to land in place and move to LAND (which retries if needed)."""
         self.send_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
         self.land_confirmed = False
         self.set_state('LAND')
 
     # ---------- main loop ----------
     def on_timer(self):
+        """Runs at RATE_HZ: safety checks, then the current state's step, then streaming."""
         self.state_ticks += 1
 
         # Safety checks that apply whenever we are flying the vehicle.
         if self.state in FLYING_STATES:
+            # If PX4 left offboard (failsafe, RC override, mode switch in QGC),
+            # respect that and stop sending setpoints.
             if not self.in_offboard():
                 self.get_logger().warn(
                     'Left offboard mode (PX4 failsafe or pilot). Handing control back.')
                 self.set_state('HANDOFF')
                 return
+            # Position setpoints are meaningless without a position estimate.
             if not self.pos_ok():
                 self.get_logger().error('Lost local position estimate. Landing in place.')
                 self.begin_land()
                 return
 
+        # Dispatch to the handler for the current state, e.g. 'PATROL' -> step_patrol().
         getattr(self, 'step_' + self.state.lower())()
 
         # Offboard needs a continuous stream of heartbeats and setpoints.
@@ -219,6 +265,7 @@ class PatrolRtl(Node):
             self.publish_setpoint(*self.target)
 
     def step_wait_for_px4(self):
+        """Wait until PX4 is publishing status, a valid position, and battery data."""
         if self.status is not None and self.pos_ok() and self.batt is not None:
             self.set_state('PREFLIGHT')
         else:
@@ -226,20 +273,26 @@ class PatrolRtl(Node):
                                    throttle_duration_sec=5.0)
 
     def step_preflight(self):
+        """Record home, build the patrol square, and pre-stream setpoints for 1 s."""
         if self.home is None:
+            # Home = where the drone is sitting right now.
             hx, hy, hz = self.pos.x, self.pos.y, self.pos.z
             yaw = self.pos.heading if not math.isnan(self.pos.heading) else 0.0
             self.home = (hx, hy, hz, yaw)
+            # First target: straight up above home (z decreases going up in NED).
             self.target = (hx, hy, hz - self.alt)
+            # Square of side patrol_size_m centred on home, flown at patrol altitude.
             h = self.size / 2.0
             fz = hz - self.alt
             self.waypoints = [(hx + h, hy + h, fz), (hx + h, hy - h, fz),
                               (hx - h, hy - h, fz), (hx - h, hy + h, fz)]
             # Make PX4's own home match ours so its RTL backstop goes to the same spot.
+            # param1 = 1 means "use current location".
             self.send_command(VehicleCommand.VEHICLE_CMD_DO_SET_HOME, 1.0)
             self.get_logger().info(
                 f'Home set at local x={hx:.2f} y={hy:.2f} z={hz:.2f}')
 
+        # Don't take off at all if we'd have to turn around immediately.
         if self.battery_low():
             self.get_logger().error(
                 f'Battery {self.batt_str()} is already at or below the return '
@@ -252,9 +305,11 @@ class PatrolRtl(Node):
             self.set_state('ARMING')
 
     def step_arming(self):
+        """Request offboard mode and arm, retrying once per second up to 5 times."""
         if self.armed() and self.in_offboard():
             self.set_state('TAKEOFF')
             return
+        # state_ticks % RATE_HZ == 1 fires on the first tick and then once per second.
         if self.state_ticks % RATE_HZ == 1:
             if self.tries >= 5:
                 self.get_logger().error(
@@ -262,10 +317,13 @@ class PatrolRtl(Node):
                 self.set_state('DONE')
                 return
             self.tries += 1
+            # DO_SET_MODE: param1=1 (custom mode), param2=6 (PX4 main mode OFFBOARD).
             self.send_command(VehicleCommand.VEHICLE_CMD_DO_SET_MODE, 1.0, 6.0)
+            # COMPONENT_ARM_DISARM: param1=1 arms.
             self.send_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.0)
 
     def step_takeoff(self):
+        """Climb to the point above home; start patrolling once there."""
         if self.battery_low():
             self.set_state('RETURN')
             return
@@ -273,11 +331,13 @@ class PatrolRtl(Node):
             self.set_state('PATROL')
 
     def step_patrol(self):
+        """Fly the square corner to corner until the battery hits the return threshold."""
         if self.battery_low():
             self.set_state('RETURN')
             return
         self.target = self.waypoints[self.wp_index]
         if self.reached(self.target):
+            # Advance to the next corner; wrapping back to 0 completes a lap.
             self.wp_index = (self.wp_index + 1) % len(self.waypoints)
             if self.wp_index == 0:
                 self.laps += 1
@@ -285,6 +345,7 @@ class PatrolRtl(Node):
                     f'Lap {self.laps} done (battery {self.batt_str()})')
 
     def step_return(self):
+        """Fly back to the point above home, hover 2 s to settle, then land."""
         hx, hy, hz, _ = self.home
         self.target = (hx, hy, hz - self.alt)
         if self.reached(self.target):
@@ -292,16 +353,21 @@ class PatrolRtl(Node):
             if self.hold_ticks >= 2 * RATE_HZ:   # settle 2 s over home
                 self.begin_land()
         else:
+            # Drifted out of tolerance; restart the settle timer.
             self.hold_ticks = 0
 
     def step_land(self):
+        """Make sure PX4 is in AUTO_LAND, then wait for touchdown and disarm."""
         if self.nav_state() == VehicleStatus.NAVIGATION_STATE_AUTO_LAND:
+            # PX4 accepted the land command; it now flies the descent itself.
             self.land_confirmed = True
         elif (not self.land_confirmed and self.state_ticks % RATE_HZ == 0
               and self.tries < 5):
+            # Land command may have been dropped (BEST_EFFORT QoS); resend once a second.
             self.tries += 1
             self.send_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
 
+        # PX4 auto-disarms shortly after landing; that's our signal we're finished.
         if self.landed and not self.armed():
             if self.pos is not None and self.home is not None:
                 horiz, _ = self.dist_to(self.home[:3])
@@ -311,12 +377,14 @@ class PatrolRtl(Node):
             self.set_state('DONE')
 
     def step_handoff(self):
+        """PX4/pilot is in charge. Send nothing; just wait for landed and disarmed."""
         self.get_logger().info('PX4 has control. Waiting for it to land and disarm.',
                                throttle_duration_sec=10.0)
         if self.landed and not self.armed():
             self.set_state('DONE')
 
     def step_done(self):
+        """Terminal state: signal main() to shut the node down."""
         self.done = True
 
 
@@ -324,6 +392,7 @@ def main(args=None):
     rclpy.init(args=args)
     node = PatrolRtl()
     try:
+        # Spin manually (instead of rclpy.spin) so we can exit once the mission is DONE.
         while rclpy.ok() and not node.done:
             rclpy.spin_once(node, timeout_sec=0.1)
     except KeyboardInterrupt:
