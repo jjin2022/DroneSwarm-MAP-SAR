@@ -15,6 +15,7 @@ setup(
         # get_package_share_directory('las_offboard') can find them.
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
         ('share/' + package_name + '/worlds', glob('worlds/*.sdf')),
+        ('share/' + package_name + '/rviz', glob('rviz/*.rviz')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -26,6 +27,7 @@ setup(
         'console_scripts': [
             'takeoff_land = las_offboard.takeoff_land:main',
             'patrol_rtl = las_offboard.patrol_rtl:main',
+            'patrol_lidar = las_offboard.patrol_lidar:main',
             'lidar_test = las_offboard.lidar_test:main',
         ],
     },

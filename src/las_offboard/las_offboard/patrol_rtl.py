@@ -38,8 +38,9 @@ STREAMING_STATES = ('PREFLIGHT', 'ARMING') + FLYING_STATES
 
 
 class PatrolRtl(Node):
-    def __init__(self):
-        super().__init__('patrol_rtl')
+    # node_name lets subclasses (e.g. patrol_lidar) reuse this class under their own name.
+    def __init__(self, node_name='patrol_rtl'):
+        super().__init__(node_name)
 
         # ---------- parameters (override with --ros-args -p name:=value) ----------
         p = self.declare_parameter

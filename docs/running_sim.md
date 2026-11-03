@@ -119,6 +119,39 @@ rviz2                        # Fixed Frame: link, Add > By topic > /scan
 ```
 The `world:=` value must match the world PX4 started (`default` if you didn't set `PX4_GZ_WORLD`).
 
+### `patrol_lidar`: patrol with avoidance, mapping and object tracing
+
+Same patrol as `patrol_rtl`, plus:
+- steers round obstacles the lidar sees
+- builds a map (`/map`)
+- traces objects (`/objects`)
+- on low battery, returns **along the square** instead of cutting across
+
+Needs the lidar bridge from above running.
+
+```bash
+# same sourcing as section 2
+ros2 run las_offboard patrol_lidar --ros-args -p altitude_m:=2.0 \
+  -p map_dir:=~/dev/DroneSwarm-MAP-SAR/recordings
+rviz2 -d $(ros2 pkg prefix las_offboard)/share/las_offboard/rviz/patrol_lidar.rviz   # map + objects
+```
+At the end it logs the objects found and saves `lidar_map_<time>.pgm/.yaml` and
+`lidar_map_<time>_objects.csv` to `map_dir`.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `cruise_speed_m_s` | 2.0 | Approximate flying speed |
+| `avoid_radius_m` | 0.8 | Clearance kept from obstacles on each side |
+| `avoid_lookahead_m` | 3.0 | How far ahead the path must be clear |
+| `stuck_timeout_s` | 15.0 | Skip a corner after this long with no progress |
+| `face_travel_direction` | true | Turn the nose (and lidar) toward where it's flying |
+| `map_dir` | `.` | Where to save the map; `''` to not save |
+
+The `patrol_rtl` parameters (`altitude_m`, `patrol_size_m`, `return_battery`, ...) also apply.
+Fly at 2 m so the lidar is below the 3 m obstacles. Returning along the square takes
+longer than cutting across, so leave battery margin. In the sim,
+`param set SIM_BAT_DRAIN 300` at `pxh>` slows the drain.
+
 ## 5. Checks
 
 ```bash

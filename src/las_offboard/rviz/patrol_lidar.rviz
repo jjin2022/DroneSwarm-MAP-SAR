@@ -1,0 +1,40 @@
+# RViz layout for patrol_lidar: occupancy map (/map) + traced objects (/objects),
+# top-down, Fixed Frame "map" (ENU, origin at home).
+# Open with: rviz2 -d $(ros2 pkg prefix las_offboard)/share/las_offboard/rviz/patrol_lidar.rviz
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 40
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Topic:
+        Value: /map
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+      Alpha: 0.8
+      Color Scheme: map
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Objects
+      Enabled: true
+      Topic:
+        Value: /objects
+  Global Options:
+    Fixed Frame: map
+    Background Color: 48; 48; 48
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Scale: 25
+      X: 0
+      Y: 0
+Window Geometry:
+  Width: 1000
+  Height: 800
