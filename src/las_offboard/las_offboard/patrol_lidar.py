@@ -53,7 +53,7 @@ from geometry_msgs.msg import Point
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import LaserScan
 from visualization_msgs.msg import Marker, MarkerArray
-from px4_msgs.msg import TrajectorySetpoint, VehicleAttitude
+from px4_msgs.msg import TrajectorySetpoint, VehicleAttitude, VehicleCommand
 
 from las_offboard.patrol_rtl import (PatrolRtl, RATE_HZ, NAN, FLYING_STATES,
                                      STREAMING_STATES)
@@ -339,6 +339,15 @@ class PatrolLidar(PatrolRtl):
         self.lidar_lost_ticks = 0
         self.lidar_ticks = 0
         self.finished = False
+        # Every topic we read must have exactly one publisher (PX4's agent or the
+        # lidar bridge). A second one, e.g. `ros2 bag play` of an old flight,
+        # silently mixes recorded data into ours.
+        gp = self.get_parameter
+        self.watch_topics = [gp('status_topic').value, gp('local_position_topic').value,
+                             gp('battery_topic').value, gp('land_detected_topic').value,
+                             att_topic, scan_topic]
+        self.conflicts = []
+        self.graph_ticks = 0
 
         self.get_logger().info(
             f'patrol_lidar: speed ~{self.speed} m/s, clearance {self.radius} m, '
@@ -355,6 +364,34 @@ class PatrolLidar(PatrolRtl):
 
     def scan_ok(self):
         return self.scan is not None and self.now_s() - self.scan_time < 1.0
+
+    def duplicate_publishers(self):
+        """Topics we read that have more than one publisher (e.g. a bag replay)."""
+        return [t for t in self.watch_topics if self.count_publishers(t) > 1]
+
+    def handle_conflicts(self):
+        """Act on extra publishers. Returns True if this tick should stop here."""
+        self.graph_ticks += 1
+        if self.graph_ticks % RATE_HZ == 1:              # check once a second
+            self.conflicts = self.duplicate_publishers()
+        if not self.conflicts or self.state in ('LAND', 'HANDOFF', 'DONE'):
+            return False
+        what = (f'More than one publisher on {", ".join(self.conflicts)} '
+                '(is a `ros2 bag play` running?)')
+        if self.state in FLYING_STATES:
+            self.get_logger().error(f'{what}. Data can\'t be trusted. Landing in place.')
+            self.begin_land()
+            return True
+        if self.state == 'ARMING':
+            self.send_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, 0.0)
+        if self.state in ('PREFLIGHT', 'ARMING'):
+            self.home = None                  # may have come from replayed data
+            self.target = None
+            self.set_state('WAIT_FOR_PX4')
+        self.get_logger().error(
+            f'{what}. Not taking off until only PX4 and the lidar bridge publish them.',
+            throttle_duration_sec=5.0)
+        return True
 
     # ---------- frames ----------
     def enu(self, x, y):
@@ -578,6 +615,9 @@ class PatrolLidar(PatrolRtl):
                 self.begin_land()
                 return
 
+        if self.handle_conflicts():
+            return
+
         self.process_lidar()
 
         # Without the lidar we can't avoid anything: hold, then land if it stays gone.
@@ -692,15 +732,22 @@ class PatrolLidar(PatrolRtl):
         super().step_done()
 
     # ---------- end of mission ----------
+    def say(self, text):
+        """Log, or print if ROS has already shut down (e.g. after Ctrl-C)."""
+        if rclpy.ok():
+            self.get_logger().info(text)
+        else:
+            print(f'[patrol_lidar] {text}', flush=True)
+
     def finish(self):
         """Log the objects found and save the map (once)."""
         if self.finished:
             return
         self.finished = True
         objs = self.tracker.confirmed()
-        self.get_logger().info(f'{len(objs)} objects found:')
+        self.say(f'{len(objs)} objects found:')
         for obj in objs:
-            self.get_logger().info(f'  {obj.describe()}')
+            self.say(f'  {obj.describe()}')
         if not self.map_dir:
             return
         folder = os.path.expanduser(self.map_dir)
@@ -713,7 +760,7 @@ class PatrolLidar(PatrolRtl):
                 (ce, cn), (w, h) = obj.center(), obj.size()
                 f.write(f'{obj.id},{obj.kind()},{ce:.2f},{cn:.2f},{w:.2f},{h:.2f},'
                         f'{len(obj.cells)}\n')
-        self.get_logger().info(f'Map saved: {base}.pgm/.yaml, objects: {base}_objects.csv')
+        self.say(f'Map saved: {base}.pgm/.yaml, objects: {base}_objects.csv')
 
 
 def main(args=None):
