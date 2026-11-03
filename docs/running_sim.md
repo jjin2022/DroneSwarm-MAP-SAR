@@ -145,12 +145,30 @@ At the end it logs the objects found and saves `lidar_map_<time>.pgm/.yaml` and
 | `avoid_lookahead_m` | 3.0 | How far ahead the path must be clear |
 | `stuck_timeout_s` | 15.0 | Skip a corner after this long with no progress |
 | `face_travel_direction` | true | Turn the nose (and lidar) toward where it's flying |
-| `map_dir` | `.` | Where to save the map; `''` to not save |
+| `map_dir` | `.` | Where to save the map. To not save: `-p "map_dir:=''"` (keep the quotes as shown) |
 
 The `patrol_rtl` parameters (`altitude_m`, `patrol_size_m`, `return_battery`, ...) also apply.
 Fly at 2 m so the lidar is below the 3 m obstacles. Returning along the square takes
 longer than cutting across, so leave battery margin. In the sim,
 `param set SIM_BAT_DRAIN 300` at `pxh>` slows the drain.
+
+**Don't replay a bag while the sim is running.** `ros2 bag play` publishes the
+recorded flight on the same topics as the live one (`/fmu/out/...`, `/scan`), so a
+node gets both mixed together: phantom obstacles and a wrong position.
+`patrol_lidar` checks for this once a second. Every topic it reads must have exactly
+one publisher (PX4's agent or the lidar bridge). If one has more:
+- **Before takeoff:** it refuses to take off and keeps waiting (disarming if it
+  already armed) until the extra publisher is gone.
+- **In flight:** it hands control to PX4 to land in place.
+
+The error names the topics:
+```
+More than one publisher on fmu/out/vehicle_status_v1, ..., /scan (is a `ros2 bag play` running?).
+Not taking off until only PX4 and the lidar bridge publish them.
+```
+Find the culprit with `ros2 topic info -v /scan` or `ros2 node list | grep rosbag2_player`,
+and stop it (Ctrl+C in its terminal). Replay bags with the sim closed, or on another
+`ROS_DOMAIN_ID`. `patrol_rtl` and `takeoff_land` don't have this check.
 
 ## 5. Checks
 
@@ -182,3 +200,5 @@ Set with `--ros-args -p name:=value`.
 | `No offboard signal` in QGC after landing | Expected: the node stops streaming once PX4 is landing. |
 | Topic listed but no data | PX4 1.17 publishes versioned topics (`_v1`). Check `Publisher count` with `ros2 topic info`. |
 | `ModuleNotFoundError: px4_msgs` | Source `~/dev/px4_ws/install/setup.bash`. |
+| `More than one publisher on ...` from `patrol_lidar` | Something else publishes on the drone's topics, usually a `ros2 bag play`. Stop it; see the warning in section 4. |
+| Phantom obstacles, drone dodging nothing or wobbling (`patrol_rtl` / `takeoff_land`) | Same cause: a bag replay mixing in old data. These nodes don't check for it. Stop the replay and land. |
