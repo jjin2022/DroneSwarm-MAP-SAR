@@ -17,13 +17,18 @@ Built on patrol_rtl (same states, PX4 handling and safety checks). Adds:
       to map_dir as lidar_map_<time>.pgm/.yaml (ROS map_server format) at the end.
       Beams that hit the ground because the drone is tilted are recognised using
       the vehicle attitude and only clear space, so they don't show up as walls.
+      Mapping starts once the drone reaches patrol altitude: before that PX4's
+      heading is still settling and scans land in the wrong place.
 
   Object tracing
       Once a second, occupied map cells that touch (small gaps allowed) are
-      grouped into objects. An object keeps its ID while its cells overlap the
-      previous update's, and is confirmed after several updates in a row, so
-      brief noise never becomes an object. Working from the map rather than raw
-      scans means stray ground hits (drone tilted) can't chain objects together.
+      grouped into objects. A group keeps the ID of the object it overlaps, or
+      of the nearest one within 1 m (thin trunks fade in and out of the map),
+      and an object is confirmed after several solid sightings, so brief noise
+      never becomes an object. Confirmed objects are remembered for the whole
+      flight, so a tree that fades and comes back keeps its ID instead of being
+      counted again. Working from the map rather than raw scans means stray
+      ground hits (drone tilted) can't chain objects together.
       Objects are logged, published on /objects (MarkerArray: the traced cells
       plus a label) and saved to lidar_map_<time>_objects.csv.
 
@@ -175,24 +180,41 @@ class OccupancyMap:
 # Object tracing
 # ======================================================================
 class TracedObject:
-    """One object: a group of occupied map cells."""
+    """One object: the occupied map cells it was traced to in its latest update."""
     def __init__(self, oid):
         self.id = oid
         self.updates = 0          # map updates it has been present in
         self.missed = 0           # updates in a row it has been missing from the map
         self.confirmed = False
-        self.cells = frozenset()  # flat map indices
+        self.cells = frozenset()  # flat map indices (last seen footprint)
         self.points = np.zeros((0, 2))
         self.box = [0.0, 0.0, 0.0, 0.0]   # [e_min, e_max, n_min, n_max], ENU metres
 
-    def set_cells(self, cells, points, res):
-        self.cells = cells
-        self.points = points                # ENU cell centres, (K, 2)
-        h = res / 2.0
-        self.box = [points[:, 0].min() - h, points[:, 0].max() + h,
-                    points[:, 1].min() - h, points[:, 1].max() + h]
-        self.updates += 1
-        self.missed = 0
+    def set_cells(self, cells, grid):
+        """Replace the footprint with this update's cells."""
+        self.cells = frozenset(cells)
+        flat = np.fromiter(self.cells, dtype=np.int64, count=len(self.cells))
+        r, c = flat // grid.n, flat % grid.n
+        self.points = np.stack([grid.origin + (c + 0.5) * grid.res,
+                                grid.origin + (r + 0.5) * grid.res], axis=1)   # ENU, (K, 2)
+        h = grid.res / 2.0
+        self.box = [self.points[:, 0].min() - h, self.points[:, 0].max() + h,
+                    self.points[:, 1].min() - h, self.points[:, 1].max() + h]
+
+    def absorb(self, other):
+        """Take over another object's history (they turned out to be one object)."""
+        self.updates = max(self.updates, other.updates)
+        self.confirmed = self.confirmed or other.confirmed
+
+    def distance_to(self, points, box):
+        """Closest distance (m) between this footprint and points (K, 2) with bounding box."""
+        gap_e = max(box[0] - self.box[1], self.box[0] - box[1], 0.0)
+        gap_n = max(box[2] - self.box[3], self.box[2] - box[3], 0.0)
+        if math.hypot(gap_e, gap_n) > 2.0:        # boxes far apart: skip the exact check
+            return math.hypot(gap_e, gap_n)
+        d = np.hypot(self.points[:, None, 0] - points[None, :, 0],
+                     self.points[:, None, 1] - points[None, :, 1])
+        return float(d.min())
 
     def center(self):
         return (self.box[0] + self.box[1]) / 2.0, (self.box[2] + self.box[3]) / 2.0
@@ -213,20 +235,33 @@ class ObjectTracer:
     """Traces objects in the occupancy map.
 
     Each update groups occupied cells that are within link_cells of each other
-    (so a wall with a missing cell stays one object). A group that shares cells
-    with an object from the previous update keeps that object's ID (the oldest
-    one if it touches several, i.e. objects merged; the biggest piece keeps the
-    ID if one splits). An object is confirmed once it has been present in
-    confirm_updates updates and has at least min_cells cells. One that drops out
-    of the map is remembered (last known cells) for keep_missing updates, so a
-    far object that flickers doesn't come back under a new ID.
+    (so a wall with a missing cell stays one object). A group that overlaps
+    known objects' last footprints joins the oldest of them, and the others are
+    merged into it (the map shows they are connected). A group that overlaps
+    nothing joins the single nearest object within merge_m (a trunk whose cells
+    grew back slightly offset, or another piece of the same canopy); otherwise
+    it starts a new candidate. Distance alone never merges two objects, so
+    neighbouring trees can't chain together. An object's footprint is the cells
+    it had in its latest solid sighting (at least min_cells cells).
 
-    Defaults tuned on recorded flights in the lidar_test world.
+    A group smaller than min_cells can keep a known object alive but can't
+    start one or move its footprint. A candidate is confirmed once it has had at least min_cells
+    cells in confirm_updates updates; one that drops out of the map for
+    keep_missing updates before that is forgotten (noise).
+    Confirmed objects are kept, with their last footprint, for the rest of the
+    flight: thin obstacles fade in and out of the map as grazing beams clear
+    their cells, and forgetting them made the same tree come back under a new
+    ID again and again.
+
+    merge_m must stay below the narrowest gap between separate objects you want
+    counted separately (forest_pillars trunks are >= 2 m apart).
     """
-    def __init__(self, min_cells=5, link_cells=4, confirm_updates=5, keep_missing=5):
+    def __init__(self, min_cells=5, link_cells=4, merge_m=1.0, confirm_updates=5,
+                 keep_missing=5):
         self.min_cells = min_cells
         self.offsets = [(dr, dc) for dr in range(-link_cells, link_cells + 1)
                         for dc in range(-link_cells, link_cells + 1) if dr or dc]
+        self.merge_m = merge_m
         self.confirm_updates = confirm_updates
         self.keep_missing = keep_missing
         self.objects = {}
@@ -260,35 +295,55 @@ class ObjectTracer:
         """Re-trace objects from an OccupancyMap. Returns objects confirmed now."""
         rows, cols = np.nonzero(grid.logodds > grid.L_OCCUPIED)
         rows, cols = rows.tolist(), cols.tolist()
-        current, newly = {}, []
+        claimed = {}    # object id -> cells assigned to it this update
         for members in sorted(self._groups(rows, cols), key=len, reverse=True):
-            if len(members) < self.min_cells:
-                continue
             r = np.array([rows[i] for i in members])
             c = np.array([cols[i] for i in members])
-            cells = frozenset((r * grid.n + c).tolist())
-            previous = sorted((o for o in self.objects.values()
-                               if o.id not in current and o.cells & cells), key=lambda o: o.id)
-            if previous:
-                obj = previous[0]
+            cells = set((r * grid.n + c).tolist())
+            overlapping = sorted((o for o in self.objects.values() if o.cells & cells),
+                                 key=lambda o: o.id)
+            if overlapping:
+                obj = overlapping[0]
+                for other in overlapping[1:]:      # connected in the map: one object
+                    obj.absorb(other)
+                    del self.objects[other.id]
+                    cells |= claimed.pop(other.id, set())
             else:
-                obj = TracedObject(self.next_id)
-                self.next_id += 1
-            points = np.stack([grid.origin + (c + 0.5) * grid.res,
-                               grid.origin + (r + 0.5) * grid.res], axis=1)
-            obj.set_cells(cells, points, grid.res)
-            current[obj.id] = obj
-            if not obj.confirmed and obj.updates >= self.confirm_updates:
-                obj.confirmed = True
-                newly.append(obj)
-        # Keep recently-missing objects (not merged into another) for a few updates.
-        for obj in self.objects.values():
-            if obj.id not in current and obj.missed < self.keep_missing and not any(
-                    obj.cells & o.cells for o in current.values()):
+                points = np.stack([grid.origin + (c + 0.5) * grid.res,
+                                   grid.origin + (r + 0.5) * grid.res], axis=1)
+                h = grid.res / 2.0
+                box = [points[:, 0].min() - h, points[:, 0].max() + h,
+                       points[:, 1].min() - h, points[:, 1].max() + h]
+                near = min(((o.distance_to(points, box), o.id) for o in self.objects.values()),
+                           default=(math.inf, None))
+                if near[0] <= self.merge_m:
+                    obj = self.objects[near[1]]
+                elif len(cells) < self.min_cells:
+                    continue                       # too small to start a new object
+                else:
+                    obj = TracedObject(self.next_id)
+                    self.next_id += 1
+                    self.objects[obj.id] = obj
+                    obj.set_cells(cells, grid)     # so later pieces this update can join it
+            claimed.setdefault(obj.id, set()).update(cells)
+
+        newly = []
+        for obj in list(self.objects.values()):
+            if obj.id in claimed:
+                obj.missed = 0
+                if len(claimed[obj.id]) >= self.min_cells:
+                    # Only solid sightings move the footprint and count toward
+                    # confirming; a few stray cells just keep the object alive.
+                    obj.set_cells(claimed[obj.id], grid)
+                    obj.updates += 1
+                if not obj.confirmed and obj.updates >= self.confirm_updates:
+                    obj.confirmed = True
+                    newly.append(obj)
+            elif not obj.confirmed:
                 obj.missed += 1
-                current[obj.id] = obj
-        self.objects = current
-        return newly
+                if obj.missed > self.keep_missing:
+                    del self.objects[obj.id]          # never confirmed: noise
+        return sorted(newly, key=lambda o: o.id)
 
 
 # ======================================================================
@@ -428,7 +483,10 @@ class PatrolLidar(PatrolRtl):
         dist = np.hypot(e - pe, n - pn)
 
         self.lidar_ticks += 1
-        if self.lidar_ticks % 2 == 0:                    # map at 5 Hz
+        # Map at 5 Hz, from PATROL on: on the ground and during takeoff PX4's
+        # heading is still settling (a few degrees off), which put early copies
+        # of obstacles up to ~2 m from where they are and became ghost objects.
+        if self.lidar_ticks % 2 == 0 and self.state in AVOID_STATES:
             self.map.update(oe, on, e, n, hit)
 
         near = hit & (dist < self.lookahead + self.radius + 1.0)
