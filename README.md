@@ -162,7 +162,11 @@ reference world for avoidance and mapping tests.
 │   ├── setup.md                    # Tested versions; terminal-by-terminal start-up
 │   ├── running_sim.md              # Sim commands, node parameters, troubleshooting
 │   ├── simulation_test_11126.md    # Lidar sim test checklist
+│   ├── drone-design.md             # Scout drone hardware, docking, GPS-denied swarm localization
 │   └── *.pdf                       # Requirements and scope; SAR statistics
+├── tools/
+│   ├── drone_budget.py             # Drone mass / power / endurance estimate
+│   └── swarm_uwb_sim.py            # GPS-loss swarm localization check (numpy)
 └── src/
     └── las_offboard/               # ROS 2 Python package (ament_python)
         ├── las_offboard/           # Nodes: takeoff_land, patrol_rtl, patrol_lidar, lidar_test
@@ -295,6 +299,10 @@ Each phase has an exit criterion. Do not advance until it is met.
 ## Hardware
 
 > Verify current specs, pricing, and availability with vendors before purchasing.
+
+The proposed scout drone (7-inch FPV class with 3D lidar, depth camera, mesh + UWB
+radios and a docking collar), along with the plan for keeping the swarm localized
+without GPS, is in [docs/drone-design.md](docs/drone-design.md).
 
 | Component | Prototype options |
 |---|---|
