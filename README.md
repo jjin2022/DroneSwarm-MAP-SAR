@@ -164,8 +164,11 @@ the reference world for avoidance and mapping tests.
 ├── docs/
 │   ├── setup.md                    # Tested versions; terminal-by-terminal start-up
 │   ├── running_sim.md              # Sim commands, node parameters, troubleshooting
+│   ├── demo.md                     # How to run the one-command demo
 │   ├── simulation_test_11126.md    # Lidar sim test checklist
 │   └── *.pdf                       # Requirements and scope; SAR statistics
+├── scripts/
+│   └── demo_patrol_lidar.sh        # Start/stop the whole sim + patrol_lidar; saves nothing
 └── src/
     └── las_offboard/               # ROS 2 Python package (ament_python)
         ├── las_offboard/           # Nodes: takeoff_land, patrol_rtl, patrol_lidar, lidar_test
@@ -242,7 +245,16 @@ for w in lidar_test forest_pillars; do
 done
 ```
 
-**Run the lidar patrol** — one terminal each, in this order. Details and
+**Quick demo** — opens every window below in order, flies `patrol_lidar` with RViz
+and QGroundControl, and saves nothing (no map, no objects CSV, no bag). Full
+walkthrough: [docs/demo.md](docs/demo.md).
+
+```bash
+scripts/demo_patrol_lidar.sh              # forest_pillars; or: ... lidar_test / forest
+scripts/demo_patrol_lidar.sh stop         # stop everything and close the windows
+```
+
+**Run the lidar patrol by hand** — one terminal each, in this order. Details and
 troubleshooting: [docs/running_sim.md](docs/running_sim.md).
 
 | # | Terminal | Command |
