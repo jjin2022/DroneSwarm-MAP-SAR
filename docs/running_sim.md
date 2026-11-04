@@ -236,6 +236,26 @@ it, it lands normally. For a short test flight, add `-p return_battery:=0.93`
 | `pad_lost_timeout_s` | 5.0 | Pad not seen this long: normal landing where it is |
 | `precision_land_timeout_s` | 60.0 | Whole precision landing longer than this: normal landing |
 | `dock_e`, `dock_n` | 0.0 | Roughly where the pad is (m east/north of home): the drone returns there, then the camera finds the pad. 0, 0 = home |
+| `search_altitude_m` | 4.0 | Pad not in view: climb to this height to search (camera sees ~±3.4 × ±2.5 m) |
+| `search_step_m`, `search_radius_m` | 2.0, 4.0 | Spacing and size of the expanding-square search around the dock point |
+| `search_timeout_s` | 90.0 | Give up searching after this long |
+| `max_searches` | 2 | Searches allowed (the pad can be lost again during the descent) |
+| `search_min_battery` | 0.25 | Stop looking for the pad at this battery level |
+
+**When the pad isn't found.** If the camera hasn't seen the pad for
+`pad_lost_timeout_s`, the drone climbs to `search_altitude_m` and flies an
+expanding square of points around where it expected the dock, avoiding trunks
+as usual; as soon as it sees the pad it precision-lands from there. If the search
+runs out (`search_timeout_s`, all points, `max_searches`) or the battery reaches
+`search_min_battery`, it flies back to its take-off point and lands there
+(`GO_HOME`). Without GPS that point is in the drone's own drifting frame, so it
+may be off by the drift.
+
+Tested without GPS: dock position 2.5 m wrong, the drone searched, found the pad
+and landed 2.4 cm from its centre. In `forest_pillars_nopad` (same trunks, no pad,
+made with `gen_forest.py --no-pad --name forest_pillars_nopad`) it searched, then
+went back to the take-off point and landed; with `search_min_battery:=0.75` it gave
+up at 75% instead of after the 90 s timeout.
 
 **Results (2026-11-04)**, touchdown distance from the pad's true centre:
 

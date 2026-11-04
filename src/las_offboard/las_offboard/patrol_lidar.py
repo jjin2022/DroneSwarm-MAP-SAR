@@ -71,8 +71,9 @@ from las_offboard.patrol_rtl import PatrolRtl, RATE_HZ, NAN
 from las_offboard import patrol_rtl
 
 # patrol_rtl's states plus PRECISION_LAND, which flies (offboard) like them.
-FLYING_STATES = patrol_rtl.FLYING_STATES + ('PRECISION_LAND',)
-STREAMING_STATES = patrol_rtl.STREAMING_STATES + ('PRECISION_LAND',)
+LANDING_STATES = ('PRECISION_LAND', 'PAD_SEARCH', 'GO_HOME')
+FLYING_STATES = patrol_rtl.FLYING_STATES + LANDING_STATES
+STREAMING_STATES = patrol_rtl.STREAMING_STATES + LANDING_STATES
 
 # Where the lidar sits on the x500_lidar_2d, in the body FRD frame (x forward,
 # y right, z down): 0.12 m forward and 0.26 + 0.055 m up (see model.sdf).
@@ -80,7 +81,7 @@ LIDAR_OFFSET_FRD = np.array([0.12, 0.0, -0.315])
 # A beam with no return is treated as free space out to this distance.
 FREE_RANGE_M = 8.0
 # States where the drone follows the avoidance setpoint (self.cmd), not self.target.
-AVOID_STATES = ('PATROL', 'RETURN')
+AVOID_STATES = ('PATROL', 'RETURN', 'PRECISION_LAND', 'PAD_SEARCH', 'GO_HOME')
 # Inside avoid_radius_m of an obstacle, headings within 100 deg of it are blocked.
 BEAR_AWAY_COS = math.cos(math.radians(100.0))
 
@@ -408,6 +409,16 @@ class PatrolLidar(PatrolRtl):
         self.land_handoff = p('land_handoff_height_m', 0.6).value   # then PX4 lands
         self.pad_lost_timeout = p('pad_lost_timeout_s', 5.0).value
         self.precision_timeout = p('precision_land_timeout_s', 60.0).value
+        # Pad not in view: climb and search an expanding square around where it
+        # should be (camera sees ~+-3.4 x +-2.5 m from 4 m); then give up.
+        self.search_alt = p('search_altitude_m', 4.0).value
+        self.search_step = p('search_step_m', 2.0).value
+        self.search_radius = p('search_radius_m', 4.0).value
+        self.search_timeout = p('search_timeout_s', 90.0).value
+        self.max_searches = p('max_searches', 2).value
+        # Stop looking for the pad and head for the take-off point at this battery
+        # fraction, keeping enough to get there and land.
+        self.search_min_batt = p('search_min_battery', 0.25).value
         # Approximate dock (pad) position, metres east/north of home: where to
         # fly back to before looking for the pad. (0, 0) = home. On a real robot
         # this would come from the robot's reported position.
@@ -444,6 +455,10 @@ class PatrolLidar(PatrolRtl):
         self.pad = None                     # filtered pad position (x, y, z) NED
         self.pad_time = None                # when it was last seen (s, node clock)
         self.land_z = None                  # PRECISION_LAND: current altitude setpoint
+        self.dock_point = None              # where precision landing started (NED x, y)
+        self.search_pts = []                # PAD_SEARCH waypoints (NED)
+        self.search_i = 0
+        self.searches = 0
         self.finished = False
         # Every topic we read must have exactly one publisher (PX4's agent or the
         # lidar bridge). A second one, e.g. `ros2 bag play` of an old flight,
@@ -902,6 +917,8 @@ class PatrolLidar(PatrolRtl):
             self.begin_land()
             return
         self.land_z = self.target[2]
+        self.dock_point = (self.target[0], self.target[1])
+        self.searches = 0
         self.set_state('PRECISION_LAND')
         self.get_logger().info('Precision landing: centring over the pad')
 
@@ -910,21 +927,22 @@ class PatrolLidar(PatrolRtl):
 
         Below land_handoff_height_m the camera can't see the whole marker, so PX4's
         own landing takes the last part straight down from a point that is centred.
-        Falls back to a normal landing where it is if the pad isn't seen for
-        pad_lost_timeout_s or the whole thing takes over precision_land_timeout_s.
+        If the pad isn't seen for pad_lost_timeout_s, search for it (PAD_SEARCH); if
+        this takes over precision_land_timeout_s, give up (GO_HOME).
         """
         if self.state_ticks > self.precision_timeout * RATE_HZ:
-            self.get_logger().warn('Precision landing took too long: normal landing here.')
-            self.begin_land()
+            self.give_up('Precision landing took too long')
             return
         age = self.pad_age()
         if age > self.pad_lost_timeout and self.state_ticks > self.pad_lost_timeout * RATE_HZ:
-            self.get_logger().warn(f'Pad not seen for {self.pad_lost_timeout:.0f} s: '
-                                   'normal landing here.')
-            self.begin_land()
+            self.start_search(f'Pad not seen for {self.pad_lost_timeout:.0f} s')
             return
-        if self.pad is None:
-            return                                   # hold over home until it's seen
+        if self.pad is None or age > self.pad_lost_timeout:
+            if self.battery_below(self.search_min_batt):
+                self.give_up(f'Battery at {self.batt_str()} and no pad in view')
+                return
+            self.cmd = self.target    # hold; an old estimate (e.g. from take-off) is in a since-drifted frame
+            return
 
         height = self.home[2] - self.pos.z          # above home (NED z is down)
         err = math.hypot(self.pos.x - self.pad[0], self.pos.y - self.pad[1])
@@ -938,10 +956,89 @@ class PatrolLidar(PatrolRtl):
             self.land_z = min(self.land_z + self.land_rate / RATE_HZ,
                               self.home[2] - self.land_handoff + 0.1)
         self.target = (float(self.pad[0]), float(self.pad[1]), self.land_z)
+        # Far from the pad (e.g. just found by a search): go round obstacles on the way.
+        self.cmd = self.plan_to(self.target) if err > 1.0 else self.target
         self.get_logger().info(
             f'Precision landing: {height:.2f} m up, {err * 100:.0f} cm off the pad'
             f'{"" if age < 1.0 else f" (pad last seen {age:.1f} s ago)"}',
             throttle_duration_sec=2.0)
+
+    def start_search(self, reason):
+        """Climb to search_altitude_m and fly an expanding square around the dock point."""
+        if self.searches >= self.max_searches:
+            self.give_up(f'{reason}, already searched {self.searches} times')
+            return
+        self.searches += 1
+        cx, cy = self.dock_point if self.dock_point else (self.pos.x, self.pos.y)
+        z = self.home[2] - self.search_alt
+        offsets, ring = [(0.0, 0.0)], 1
+        while ring * self.search_step <= self.search_radius + 1e-6:
+            d = ring * self.search_step
+            offsets += [(d, 0), (d, d), (0, d), (-d, d), (-d, 0), (-d, -d), (0, -d), (d, -d)]
+            ring += 1
+        self.search_pts = [(cx + a, cy + b, z) for a, b in offsets]
+        self.search_i = 0
+        self.set_state('PAD_SEARCH')
+        self.get_logger().warn(f'{reason}: searching for the pad from {self.search_alt:.0f} m, '
+                               f'{len(self.search_pts)} points out to {self.search_radius:.0f} m '
+                               f'(search {self.searches}/{self.max_searches})')
+
+    def step_pad_search(self):
+        if self.pad is not None and self.pad_age() < 0.5:
+            self.get_logger().info('Pad found: precision landing from here.')
+            self.land_z = self.pos.z
+            self.set_state('PRECISION_LAND')
+            return
+        if self.state_ticks > self.search_timeout * RATE_HZ:
+            self.give_up(f'Pad not found in {self.search_timeout:.0f} s of searching')
+            return
+        if self.battery_below(self.search_min_batt):
+            self.give_up(f'Battery at {self.batt_str()} while searching')
+            return
+        goal = self.search_pts[self.search_i]
+        self.target = goal
+        if self.reached(goal) or self.stuck(goal):
+            self.hold_ticks += 1
+            if self.hold_ticks >= RATE_HZ:           # look for 1 s at each point
+                self.hold_ticks = 0
+                self.search_i += 1
+                if self.search_i >= len(self.search_pts):
+                    self.give_up('Pad not found anywhere in the search square')
+                    return
+                goal = self.search_pts[self.search_i]
+                self.target = goal
+        else:
+            self.hold_ticks = 0
+        self.cmd = self.plan_to(goal)
+
+    def battery_below(self, level):
+        """True if the battery is at or below level (0..1); missing/unknown data counts."""
+        if self.batt is None or self.now_s() - self.batt_time > 2.0:
+            return True
+        r = self.batt.remaining
+        return not self.batt.connected or r < 0.0 or math.isnan(r) or r <= level
+
+    def give_up(self, reason):
+        """Fly back to the take-off point (in the drone's own frame) and land there."""
+        self.get_logger().warn(f'{reason}: flying back to the take-off point to land.')
+        self.set_state('GO_HOME')
+
+    def step_go_home(self):
+        hx, hy, hz, _ = self.home
+        goal = (hx, hy, hz - self.alt)
+        self.target = goal
+        if self.reached(goal):
+            self.cmd = goal
+            self.hold_ticks += 1
+            if self.hold_ticks >= 2 * RATE_HZ:
+                self.begin_land()
+            return
+        self.hold_ticks = 0
+        if self.stuck(goal):
+            self.get_logger().warn('Cannot get to the take-off point: landing here.')
+            self.begin_land()
+            return
+        self.cmd = self.plan_to(goal)
 
     def step_done(self):
         self.finish()
