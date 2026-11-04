@@ -198,6 +198,60 @@ about 1.8 m: `patrol_lidar` keeps 0.8 m clear on each side, so narrower gaps
 are impassable. If you change `patrol_size_m`, pass the same value as `--patrol`
 so its corners stay clear.
 
+### Precision landing on the pad
+
+`forest_pillars` has a landing pad at the spawn point: PX4's 0.5 m ArUco marker
+(4×4, ID 0). With a downward camera, `patrol_lidar` lands on it instead of just
+flying back to where it took off: it centres over the pad at patrol altitude,
+descends only while centred, and at 0.6 m (where the camera can no longer see
+the whole marker) hands over to PX4 to land straight down.
+
+One-time setup: link the camera drone model into PX4, and (for the moved-pad
+test world) that world too:
+```bash
+ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/models/x500_lidar_cam_down \
+      ~/dev/PX4-Autopilot/Tools/simulation/gz/models/x500_lidar_cam_down
+ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/worlds/forest_pillars_moved_pad.sdf \
+      ~/dev/PX4-Autopilot/Tools/simulation/gz/worlds/forest_pillars_moved_pad.sdf
+```
+
+Run it like the lidar patrol above, with three differences:
+
+| Terminal | Change |
+|---|---|
+| PX4 | Start the binary directly with the camera model (PX4 has no `make` target for it):<br>`cd ~/dev/PX4-Autopilot && PX4_SYS_AUTOSTART=4013 PX4_SIM_MODEL=gz_x500_lidar_cam_down PX4_GZ_STANDALONE=1 PX4_GZ_WORLD=forest_pillars ./build/px4_sitl_default/bin/px4` |
+| Lidar bridge | Also bridge the camera:<br>`ros2 launch las_offboard lidar_bridge.launch.py world:=forest_pillars model:=x500_lidar_cam_down_0 camera:=true` |
+| New: pad detector | `ros2 run las_offboard pad_detector` (publishes `/landing_pad`; add `/camera/pad_debug` in RViz to see what it detects) |
+
+`patrol_lidar` uses precision landing whenever `pad_detector` is running; without
+it, it lands normally. For a short test flight, add `-p return_battery:=0.93`
+(heads home after about one lap).
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `precision_landing` | true | Use the pad when `pad_detector` is running |
+| `land_descent_rate_m_s` | 0.3 | Descent speed while centred |
+| `land_align_tolerance_m` | 0.15 | How close to the pad centre counts as centred |
+| `land_handoff_height_m` | 0.6 | Height at which PX4 takes over the last part |
+| `pad_lost_timeout_s` | 5.0 | Pad not seen this long: normal landing where it is |
+| `precision_land_timeout_s` | 60.0 | Whole precision landing longer than this: normal landing |
+
+**Results (2026-11-04)**, touchdown distance from the pad's true centre:
+
+| World | Normal landing | Precision landing |
+|---|---|---|
+| `forest_pillars` (pad where the drone took off) | 11 cm | 10 cm (3 flights) |
+| `forest_pillars_moved_pad` (pad 1.17 m from take-off: a dock that moved) | **126 cm, off the pad** | **3.5 and 7.1 cm** |
+
+With the pad where it took off, the simulator's near-perfect position estimate
+already brings the drone back onto it; the ~10 cm both ways is PX4's final
+descent. Precision landing matters when the drone doesn't know exactly where
+the pad is: a dock that moved, or real GPS drift.
+
+`pad_detector` uses OpenCV. If a NumPy 2 is installed in `~/.local`, Ubuntu's
+OpenCV can't load with it; the node detects this and restarts itself with
+user packages turned off (`PYTHONNOUSERSITE=1`), so nothing needs changing.
+
 ## 5. Checks
 
 ```bash

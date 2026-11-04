@@ -37,6 +37,13 @@ Built on patrol_rtl (same states, PX4 handling and safety checks). Adds:
       back to the first corner, then the takeoff leg home, staying at patrol
       altitude so the lidar keeps scanning. Never cuts across the middle.
 
+  Precision landing
+      Back over home, if pad_detector is publishing /landing_pad (drone model
+      with a downward camera), centre over the pad, descend only while centred,
+      and at land_handoff_height_m let PX4 land the rest straight down. Falls
+      back to a normal landing if the pad isn't seen for pad_lost_timeout_s.
+      Without pad_detector it lands normally at home.
+
 Needs the lidar bridge running:
     ros2 launch las_offboard lidar_bridge.launch.py world:=lidar_test
 View in RViz: Fixed Frame "map", Add > By topic > /map (Map) and /objects (MarkerArray).
@@ -54,14 +61,18 @@ import numpy as np
 import rclpy
 from rclpy.qos import (QoSProfile, ReliabilityPolicy, DurabilityPolicy,
                        HistoryPolicy, qos_profile_sensor_data)
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PointStamped
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import LaserScan
 from visualization_msgs.msg import Marker, MarkerArray
 from px4_msgs.msg import TrajectorySetpoint, VehicleAttitude, VehicleCommand
 
-from las_offboard.patrol_rtl import (PatrolRtl, RATE_HZ, NAN, FLYING_STATES,
-                                     STREAMING_STATES)
+from las_offboard.patrol_rtl import PatrolRtl, RATE_HZ, NAN
+from las_offboard import patrol_rtl
+
+# patrol_rtl's states plus PRECISION_LAND, which flies (offboard) like them.
+FLYING_STATES = patrol_rtl.FLYING_STATES + ('PRECISION_LAND',)
+STREAMING_STATES = patrol_rtl.STREAMING_STATES + ('PRECISION_LAND',)
 
 # Where the lidar sits on the x500_lidar_2d, in the body FRD frame (x forward,
 # y right, z down): 0.12 m forward and 0.26 + 0.055 m up (see model.sdf).
@@ -389,6 +400,14 @@ class PatrolLidar(PatrolRtl):
         self.map_dir = p('map_dir', '.').value                 # '' = don't save
         self.map = OccupancyMap(p('map_size_m', 40.0).value, p('map_resolution_m', 0.1).value)
         self.tracker = ObjectTracer()
+        # Precision landing on the pad seen by pad_detector (/landing_pad).
+        self.precision = p('precision_landing', True).value
+        pad_topic = p('pad_topic', '/landing_pad').value
+        self.land_rate = p('land_descent_rate_m_s', 0.3).value
+        self.land_align = p('land_align_tolerance_m', 0.15).value
+        self.land_handoff = p('land_handoff_height_m', 0.6).value   # then PX4 lands
+        self.pad_lost_timeout = p('pad_lost_timeout_s', 5.0).value
+        self.precision_timeout = p('precision_land_timeout_s', 60.0).value
 
         px4_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -399,6 +418,7 @@ class PatrolLidar(PatrolRtl):
                              history=HistoryPolicy.KEEP_LAST, depth=1)
         self.create_subscription(LaserScan, scan_topic, self.on_scan, qos_profile_sensor_data)
         self.create_subscription(VehicleAttitude, att_topic, self.on_att, px4_qos)
+        self.pad_sub = self.create_subscription(PointStamped, pad_topic, self.on_pad, 10)
         self.map_pub = self.create_publisher(OccupancyGrid, 'map', map_qos)
         self.obj_pub = self.create_publisher(MarkerArray, 'objects', 10)
 
@@ -417,6 +437,9 @@ class PatrolLidar(PatrolRtl):
         self.avoiding = False
         self.lidar_lost_ticks = 0
         self.lidar_ticks = 0
+        self.pad = None                     # filtered pad position (x, y, z) NED
+        self.pad_time = None                # when it was last seen (s, node clock)
+        self.land_z = None                  # PRECISION_LAND: current altitude setpoint
         self.finished = False
         # Every topic we read must have exactly one publisher (PX4's agent or the
         # lidar bridge). A second one, e.g. `ros2 bag play` of an old flight,
@@ -832,13 +855,80 @@ class PatrolLidar(PatrolRtl):
             self.cmd = goal                       # hover exactly over home
             self.hold_ticks += 1
             if self.hold_ticks >= 2 * RATE_HZ:    # settle 2 s, then land
-                self.begin_land()
+                self.start_precision_land()
             return
         self.hold_ticks = 0
         if last and self.stuck(goal):
             self.get_logger().warn('Cannot get to home. Holding; take over in QGC if needed.',
                                    throttle_duration_sec=5.0)
         self.cmd = self.plan_to(goal)
+
+    # ---------- precision landing ----------
+    def now_s(self):
+        return self.get_clock().now().nanoseconds * 1e-9
+
+    def pad_age(self):
+        """Seconds since the pad was last seen (inf if never)."""
+        return math.inf if self.pad_time is None else self.now_s() - self.pad_time
+
+    def on_pad(self, msg):
+        """Smooth pad_detector's estimates; ignore a jump of > 1 m while tracking."""
+        p = np.array([msg.point.x, msg.point.y, msg.point.z])
+        if self.pad is not None and self.pad_age() < 2.0 and math.dist(p[:2], self.pad[:2]) > 1.0:
+            return
+        self.pad = p if self.pad is None or self.pad_age() >= 2.0 else 0.7 * self.pad + 0.3 * p
+        self.pad_time = self.now_s()
+
+    def start_precision_land(self):
+        """Over home at patrol altitude: land on the pad if a pad detector is running."""
+        if not self.precision:
+            self.begin_land()
+            return
+        if self.count_publishers(self.pad_sub.topic_name) == 0:
+            self.get_logger().warn('No pad detector on /landing_pad: normal landing at home.')
+            self.begin_land()
+            return
+        self.land_z = self.target[2]
+        self.set_state('PRECISION_LAND')
+        self.get_logger().info('Precision landing: centring over the pad')
+
+    def step_precision_land(self):
+        """Centre over the pad, descend only while centred, then hand over to PX4.
+
+        Below land_handoff_height_m the camera can't see the whole marker, so PX4's
+        own landing takes the last part straight down from a point that is centred.
+        Falls back to a normal landing where it is if the pad isn't seen for
+        pad_lost_timeout_s or the whole thing takes over precision_land_timeout_s.
+        """
+        if self.state_ticks > self.precision_timeout * RATE_HZ:
+            self.get_logger().warn('Precision landing took too long: normal landing here.')
+            self.begin_land()
+            return
+        age = self.pad_age()
+        if age > self.pad_lost_timeout and self.state_ticks > self.pad_lost_timeout * RATE_HZ:
+            self.get_logger().warn(f'Pad not seen for {self.pad_lost_timeout:.0f} s: '
+                                   'normal landing here.')
+            self.begin_land()
+            return
+        if self.pad is None:
+            return                                   # hold over home until it's seen
+
+        height = self.home[2] - self.pos.z          # above home (NED z is down)
+        err = math.hypot(self.pos.x - self.pad[0], self.pos.y - self.pad[1])
+        centred = err < self.land_align and age < 1.0
+        if centred and height <= self.land_handoff:
+            self.get_logger().info(f'Over the pad at {height:.2f} m, {err * 100:.0f} cm off '
+                                   'centre: PX4 lands the rest.')
+            self.begin_land()
+            return
+        if centred:                                  # descend, but not below the handoff
+            self.land_z = min(self.land_z + self.land_rate / RATE_HZ,
+                              self.home[2] - self.land_handoff + 0.1)
+        self.target = (float(self.pad[0]), float(self.pad[1]), self.land_z)
+        self.get_logger().info(
+            f'Precision landing: {height:.2f} m up, {err * 100:.0f} cm off the pad'
+            f'{"" if age < 1.0 else f" (pad last seen {age:.1f} s ago)"}',
+            throttle_duration_sec=2.0)
 
     def step_done(self):
         self.finish()

@@ -57,12 +57,12 @@ def place_trunks(a, rng):
 
 # Landing pad: PX4's ArUco marker model (DICT_4X4_50, ID 0, 0.5 x 0.5 m) at the
 # spawn point, so the drone takes off from it and can land back on it.
-PAD_NOTE = "PX4's arucotag model (ArUco 4x4 ID 0, 0.5 m) at the spawn point."
+PAD_NOTE = "PX4's arucotag model (ArUco 4x4 ID 0, 0.5 m)"
 PAD_SDF = '''
     <include>
       <uri>model://arucotag</uri>
       <name>landing_pad</name>
-      <pose>0 0 0.001 0 0 0</pose>
+      <pose>{e:g} {n:g} 0.001 0 0 0</pose>
     </include>'''
 
 
@@ -98,7 +98,10 @@ def main():
     ap.add_argument('--corner-clear', type=float, default=1.5)
     ap.add_argument('--name', default='forest_pillars', help='world name (= file name and PX4_GZ_WORLD)')
     ap.add_argument('--no-pad', dest='pad', action='store_false',
-                    help="leave out the landing pad (PX4's 0.5 m ArUco marker, ID 0) at the spawn point")
+                    help="leave out the landing pad (PX4's 0.5 m ArUco marker, ID 0)")
+    ap.add_argument('--pad-pos', type=float, nargs=2, default=(0.0, 0.0), metavar=('E', 'N'),
+                    help='pad position (m); default the spawn point. Off the spawn point it '
+                         'tests landing on a dock that moved. Keep it inside --spawn-clear.')
     a = ap.parse_args()
 
     base = open(BASE_WORLD).read()
@@ -120,7 +123,7 @@ def main():
   {len(trunks)} cylinder trunks in a {a.size:g} x {a.size:g} m square centred on the spawn point,
   >= {a.min_gap:g} m apart (surface to surface), {a.spawn_clear:g} m clear around spawn,
   corners of a {a.patrol:g} m patrol square kept clear. Trunks are 6-10 m tall.
-  {'Landing pad: ' + PAD_NOTE if a.pad else 'No landing pad.'}
+  {f'Landing pad: {PAD_NOTE} at E={a.pad_pos[0]:g} N={a.pad_pos[1]:g}.' if a.pad else 'No landing pad.'}
 
   Link into PX4 once:
     ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/worlds/{a.name}.sdf \\
@@ -128,7 +131,7 @@ def main():
   Coordinates: ENU, x = East, y = North, metres; spawn at (0, 0).
 -->
 '''
-    models = (PAD_SDF if a.pad else '') + ''.join(trunk_sdf(i + 1, *t) for i, t in enumerate(trunks))
+    models = (PAD_SDF.format(e=a.pad_pos[0], n=a.pad_pos[1]) if a.pad else '') + ''.join(trunk_sdf(i + 1, *t) for i, t in enumerate(trunks))
     out = header + body + f'<!-- ================= FOREST TRUNKS ({len(trunks)}) ================= -->' \
         + models + '\n  </world>\n</sdf>\n'
     path = os.path.join(HERE, f'{a.name}.sdf')
