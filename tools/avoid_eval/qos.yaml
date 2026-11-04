@@ -1,0 +1,2 @@
+# PX4 publishes these best-effort; without this, ros2 bag record receives nothing.
+/fmu/out/vehicle_local_position_v1: {reliability: best_effort, durability: volatile, history: keep_last, depth: 10}

@@ -237,3 +237,9 @@ After changing the tracer or object labels in `patrol_lidar.py`, run
 `tools/tracer_eval/evaluate.py`: it replays recorded flights through the tracer and
 checks the results against each world's real objects, without the simulator. See
 [tools/tracer_eval/README.md](../tools/tracer_eval/README.md).
+
+## Testing changes to obstacle avoidance
+
+After changing avoidance in `patrol_lidar.py`, record a flight's position and run
+`tools/avoid_eval/clearance.py`: it measures how close the drone really got to each
+obstacle, from the world file. See [tools/avoid_eval/README.md](../tools/avoid_eval/README.md).

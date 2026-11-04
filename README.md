@@ -150,9 +150,13 @@ the reference world for avoidance and mapping tests.
 - `lidar_test`: all 5 obstacles traced once each, at the right positions and sizes.
 - PX4 `forest`: 29 objects for 17 trees in the mapped area (6 duplicates, 7 false),
   down from 38 (9 duplicates, 11 false) before the tracer fix.
-- Known issues: the closest pass was 0.39 m (below the 0.8 m clearance target) in a
-  2 m gap; the 2D lidar slices tree canopies into pieces more than 1 m apart, which
-  the tracer counts as separate objects.
+- Clearance in `forest_pillars`, measured against the world file: closest pass
+  0.56–0.59 m from a trunk surface (propeller tips reach ~0.38 m), under 5 s per
+  3-minute flight inside the 0.8 m target, down from 0.47 m and 17 s before the
+  avoidance fixes. `lidar_test`: never inside 0.8 m.
+- Known issues: brief passes at 0.56–0.8 m still happen alongside trunks; the 2D
+  lidar slices tree canopies into pieces more than 1 m apart, which the tracer
+  counts as separate objects.
 
 ## Repository Structure
 
@@ -170,7 +174,8 @@ the reference world for avoidance and mapping tests.
 ├── scripts/
 │   └── demo_patrol_lidar.sh        # Start/stop the whole sim + patrol_lidar; saves nothing
 ├── tools/
-│   └── tracer_eval/                # Score the object tracer on recorded flights (no sim needed)
+│   ├── tracer_eval/                # Score the object tracer on recorded flights (no sim needed)
+│   └── avoid_eval/                 # Measure real clearance to obstacles in a recorded flight
 └── src/
     └── las_offboard/               # ROS 2 Python package (ament_python)
         ├── las_offboard/           # Nodes: takeoff_land, patrol_rtl, patrol_lidar, lidar_test

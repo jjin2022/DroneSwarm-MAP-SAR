@@ -70,6 +70,8 @@ LIDAR_OFFSET_FRD = np.array([0.12, 0.0, -0.315])
 FREE_RANGE_M = 8.0
 # States where the drone follows the avoidance setpoint (self.cmd), not self.target.
 AVOID_STATES = ('PATROL', 'RETURN')
+# Inside avoid_radius_m of an obstacle, headings within 100 deg of it are blocked.
+BEAR_AWAY_COS = math.cos(math.radians(100.0))
 
 
 def quat_to_rot(q):
@@ -582,17 +584,40 @@ class PatrolLidar(PatrolRtl):
     def free_heading(self, goal_heading, rel, check):
         """Heading (ENU rad) nearest the goal whose corridor is clear for `check` m.
 
-        Candidates are tried 0, +5, -5, +10, -10 ... deg from the goal, starting on
-        the side we last turned to, so the drone doesn't flip between sides.
+        With the path clear last tick, candidates are tried 0, +5, -5, +10, -10 ...
+        deg from the goal (smallest turn either way). While already going round
+        something, every heading on the side we turned to (up to 180 deg) is tried
+        before the other side. Without that commitment a thin trunk dead ahead
+        made the choice flip sides every second, and the drone weaved straight
+        into it.
+
+        A heading is blocked if the path from the drone to `check` m along it comes
+        within avoid_radius_m of an obstacle. This includes obstacles beside the
+        drone, not just ahead: checking only ahead let the drone turn back onto its
+        line while still alongside a trunk and slide past it at ~0.5 m. Obstacles
+        already closer than avoid_radius_m can't block every heading (every path
+        starts inside their clearance), so they only block headings less than
+        100 deg away from them: the drone has to bear away while it passes, which
+        opens the gap back up.
         """
-        offsets = [0.0]
-        for k in range(1, 37):
-            offsets += [self.avoid_side * 5.0 * k, -self.avoid_side * 5.0 * k]
+        side = self.avoid_side
+        if self.avoiding:      # committed: this side all the way round first
+            offsets = [0.0] + [side * 5.0 * k for k in range(1, 37)] \
+                + [-side * 5.0 * k for k in range(1, 36)]
+        else:
+            offsets = [0.0]
+            for k in range(1, 37):
+                offsets += [side * 5.0 * k, -side * 5.0 * k]
         th = goal_heading + np.radians(offsets)
         u = np.stack([np.cos(th), np.sin(th)], axis=1)                 # (K, 2)
         along = rel @ u.T                                              # (M, K)
         cross = np.abs(rel[:, :1] * u[:, 1] - rel[:, 1:] * u[:, 0])    # (M, K)
-        blocked = ((along > 0.0) & (along < check) & (cross < self.radius)).any(axis=0)
+        # Distance from each obstacle to the path segment [0, check] along each heading.
+        gap = np.hypot(along - np.clip(along, 0.0, check), cross)     # (M, K)
+        dist = np.hypot(rel[:, 0], rel[:, 1])                          # (M,)
+        inside = dist < self.radius
+        toward = along > BEAR_AWAY_COS * dist[:, None]                 # < 100 deg from it
+        blocked = np.where(inside[:, None], toward, gap < self.radius).any(axis=0)
         free = np.flatnonzero(~blocked)
         if free.size == 0:
             return None, None
@@ -629,9 +654,16 @@ class PatrolLidar(PatrolRtl):
                 return self.setpoint_toward(pe, pn, away, 0.5, z, face=False)
             heading, off = self.free_heading(heading, rel, min(self.lookahead, dist))
             if heading is None:
-                self.get_logger().warn('Boxed in by obstacles, holding position',
+                # No clear heading: back away from everything nearby (closest
+                # points count most) rather than hover where we got stuck.
+                near = ranges < self.lookahead
+                push = -(rel[near] / ranges[near, None] ** 3).sum(axis=0)
+                self.get_logger().warn('Boxed in by obstacles, backing out',
                                        throttle_duration_sec=2.0)
-                return (self.pos.x, self.pos.y, z)
+                if np.hypot(*push) < 1e-6:
+                    return (self.pos.x, self.pos.y, z)
+                return self.setpoint_toward(pe, pn, math.atan2(push[1], push[0]), 0.5, z,
+                                            face=False)
             if off and not self.avoiding:
                 self.get_logger().info(
                     f'Obstacle ahead: steering {abs(off):.0f} deg {"left" if off > 0 else "right"}')
