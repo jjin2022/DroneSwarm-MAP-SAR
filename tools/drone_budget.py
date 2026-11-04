@@ -24,6 +24,7 @@ COMMON = [
     ("UWB ranging module (DW3000 class) + antenna", 10, 0.5),
     ("Forward stereo depth camera (global shutter, IMU)", 72, 2.5),
     ("Video camera (12 MP, CSI)", 20, 1.2),
+    ("Thermal camera (Lepton 3.5 class)", 5, 0.2),
     ("Downward camera (global shutter, dock tags)", 6, 0.4),
     ("Downward flow + ToF rangefinder", 6, 0.3),
     ("RC receiver (safety pilot, ELRS)", 3, 0.1),
@@ -33,8 +34,23 @@ COMMON = [
 ]
 
 VARIANTS = {
-    # 7-inch FPV class with Mid-360 and Orin NX. The design target.
+    # Design baseline (decisions log, docs/drone-design.md): 8 in props, two
+    # 6S1P packs in parallel so each pack stays under 100 Wh.
     "baseline": dict(
+        prop_in=8.0,
+        parts=[
+            ("Frame, 8 in carbon, payload deck", 230, 0.0),
+            ("Motors 4x 2810 1100 KV", 240, 0.0),
+            ("Props 4x 8 in bi-blade", 48, 0.0),
+            ("3D lidar (Livox Mid-360 class) + mount", 280, 6.5),
+            ("Companion: Jetson Orin NX 16 GB + carrier + cooler", 118, 13.0),
+            ("Battery 2x 6S1P 21700 Li-ion 4.5 Ah (97 Wh each) + leads", 880, 0.0),
+            ("Dual-pack ideal-diode OR-ing + 2nd connector", 30, 0.3),
+        ],
+        cells=6, cell_v=3.6, cell_ah=4.5, parallel=2,
+    ),
+    # Earlier 7 in proposal: FPV-size, one 97 Wh pack. Kept for comparison.
+    "compact_7in": dict(
         prop_in=7.0,
         parts=[
             ("Frame, 7 in carbon, payload deck", 190, 0.0),
@@ -46,22 +62,9 @@ VARIANTS = {
         ],
         cells=6, cell_v=3.6, cell_ah=4.5, parallel=1,
     ),
-    # Same payload, 8-inch props and a 6S2P pack: longer sorties, bigger dock.
-    "long_endurance": dict(
-        prop_in=8.0,
-        parts=[
-            ("Frame, 8 in carbon, payload deck", 230, 0.0),
-            ("Motors 4x 2810 1100 KV", 240, 0.0),
-            ("Props 4x 8 in bi-blade", 48, 0.0),
-            ("3D lidar (Livox Mid-360 class) + mount", 280, 6.5),
-            ("Companion: Jetson Orin NX 16 GB + carrier + cooler", 118, 13.0),
-            ("Battery 6S2P 21700 Li-ion 9.0 Ah + leads", 880, 0.0),
-        ],
-        cells=6, cell_v=3.6, cell_ah=4.5, parallel=2,
-    ),
-    # Lighter build: VOXL 2-class SoC instead of Orin NX, depth camera dropped
-    # (VOXL stereo pair does depth). Less GPU headroom for detection.
-    "light": dict(
+    # Lighter 7 in build: VOXL 2-class SoC instead of Orin NX, depth camera
+    # dropped (VOXL stereo pair does depth). Less GPU headroom for detection.
+    "light_7in": dict(
         prop_in=7.0,
         parts=[
             ("Frame, 7 in carbon, payload deck", 190, 0.0),

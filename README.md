@@ -300,13 +300,13 @@ Each phase has an exit criterion. Do not advance until it is met.
 
 > Verify current specs, pricing, and availability with vendors before purchasing.
 
-The proposed scout drone (7-inch FPV class with 3D lidar, depth camera, mesh + UWB
-radios and a docking collar), along with the plan for keeping the swarm localized
+The proposed scout drone (8-inch FPV-style quad with 3D lidar, depth and thermal
+cameras, mesh + UWB radios, two battery packs and a docking collar), along with the plan for keeping the swarm localized
 without GPS, is in [docs/drone-design.md](docs/drone-design.md).
 
 | Component | Prototype options |
 |---|---|
-| Quadruped | Unitree Go2 (low-cost), Unitree B2 (larger payload), Boston Dynamics Spot or ANYbotics ANYmal (established platforms) |
+| Quadruped | **Chosen: Unitree B2-class** (payload for dock + 3–4 drones). Considered: Unitree Go2 (too little payload), Boston Dynamics Spot or ANYbotics ANYmal (cost) |
 | Drone companion computer | ModalAI VOXL 2 (GPS-denied VIO) or NVIDIA Jetson Orin Nano / NX |
 | Drone sensors | Global-shutter camera, IMU, rangefinder or optical flow, thermal camera (SAR), optional small LiDAR |
 | Robot sensors and compute | LiDAR plus IMU, Jetson Orin-class computer |

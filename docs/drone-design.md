@@ -1,6 +1,7 @@
 # LAS Scout Drone: Hardware and Swarm Localization Design
 
-**Status:** Proposed design, rev A (2026-11-04). Nothing here is built or weighed yet.
+**Status:** Proposed design, rev B (2026-11-04). Nothing here is built or weighed yet.
+Decisions made so far are listed in §11.
 **Scope:** The drone that rides on, launches from and docks on the quadruped, and how
 a team of these drones keeps a shared position picture when GPS is gone.
 
@@ -14,12 +15,13 @@ a team of these drones keeps a shared position picture when GPS is gone.
 
 | | Decision |
 |---|---|
-| Form factor | 7-inch long-range FPV quad, ~300 mm motor-to-motor, ~480 mm across the prop tips |
-| All-up mass | ~1.6 kg (budget in §4, from `tools/drone_budget.py`) |
-| Endurance | ~16 min hover with a 20 % reserve on a 6S1P 21700 Li-ion pack. That just meets P-2 (15 min). §4 covers the 8-inch option with more margin |
+| Robot | Unitree B2-class quadruped: one dock in the first build, deck rails for a second, 3–4 drones from Phase 5 |
+| Form factor | 8-inch long-range FPV-style quad, ~350 mm motor-to-motor, ~550 mm across the prop tips |
+| All-up mass | ~2.15 kg (budget in §4, from `tools/drone_budget.py`) |
+| Endurance | ~25 min hover with a 20 % reserve on two 6S1P 21700 Li-ion packs (97 Wh each) in parallel. That is ~10 min of margin over P-2 (15 min) |
 | Flight controller | PX4 on an FPV-format H7 board (same PX4 + uXRCE-DDS link as today's sim) |
 | Companion | NVIDIA Jetson Orin NX 16 GB (LIO, VIO, detection, swarm estimator) |
-| Sensors | 3D lidar (Livox Mid-360 class), 3 IMUs (FC, lidar, depth camera), forward stereo depth camera, 12 MP video camera, downward global-shutter dock camera, flow + ToF rangefinder, GNSS + compass, optional thermal |
+| Sensors | 3D lidar (Livox Mid-360 class), 3 IMUs (FC, lidar, depth camera), forward stereo depth camera, 12 MP video camera, downward global-shutter dock camera, flow + ToF rangefinder, GNSS + compass, Lepton 3.5 thermal camera |
 | Radios | Wi-Fi mesh (2x2 MIMO) for data, UWB for ranging and a backup data path, ELRS for the safety pilot |
 | Dock interface | A cone-shaped docking collar round the belly: self-centring, works at any yaw, and has two coaxial charge rings. The steel strike ring is on the drone and the electro-permanent magnet (EPM) latch is on the dock |
 | GPS-denied swarm positioning | Each drone's own lidar-inertial odometry, plus UWB ranges to 4 anchors on the robot and between drones, plus inter-drone map loop closures. All of it is fused in the **robot's map frame**, and the dock gives the starting pose |
@@ -39,7 +41,7 @@ sensors). The v1 software should use the stationary path. §6.3 is the Phase 4+ 
 | F-2 shared map | Every drone works in the robot's map frame from takeoff. Submaps and loop closures go to the robot (§7.5) |
 | F-3 autonomous launch/land/charge | Passive capture funnel, EPM latch, collar charge contacts, tag + UWB guidance (§6) |
 | F-6 lost link | UWB carries a small pose/state payload when Wi-Fi drops, and a return-to-robot behaviour runs on local LIO (§7.7) |
-| P-2 15 min sortie | §4 budget. Close to the limit at 7 inches, so it is tracked as a risk |
+| P-2 15 min sortie | §4 budget: ~25 min modelled, so there is margin for cold derating and pack ageing |
 | P-4 0.5 m map accuracy | LIO locally (cm level). Inter-drone consistency comes from UWB plus loop closures. The sim gives ~0.3–0.6 m before loop closures (§7.8) |
 | S-2 safety pilot | ELRS receiver wired directly to the FC. It overrides offboard control |
 | S-3 failsafes | Degradation ladder (§7.7) |
@@ -48,14 +50,17 @@ sensors). The v1 software should use the stationary path. §6.3 is the Phase 4+ 
 
 ## 3. Airframe and layout
 
-### 3.1 Why 7 inch, not 5 inch
+### 3.1 Why 8 inch
 
 A 360° 3D lidar (~265 g) plus an Orin-class computer (~120 g) is ~400 g of payload
 before cameras and radios. A 5-inch quad can lift that, but it would fly for
-5–7 minutes. A 7-inch frame keeps the FPV look and build style (stack-mounted FC/ESC,
-carbon plates, standard motors) and can carry the payload for 15+ minutes. If you
-want a 5-inch scout later, it would drop the 3D lidar and Orin and work as a
-"camera + VIO" scout, using this same swarm localization stack.
+5–7 minutes. A 7-inch frame gets ~16 minutes, which only just meets P-2. The B2 has
+the payload to carry a bigger drone, so the design uses an **8-inch frame with two
+battery packs**: ~25 minutes, still built the FPV way (stack-mounted FC/ESC, carbon
+plates, standard motors). The 7-inch build stays in `drone_budget.py` as
+`compact_7in` for comparison. If you want a 5-inch scout later, it would drop the 3D
+lidar and Orin and work as a "camera + VIO" scout, using this same swarm
+localization stack.
 
 ### 3.2 Layout
 
@@ -64,14 +69,14 @@ want a 5-inch scout later, it would drop the 3D lidar and Orin and work as a
 
         (M1)                         (M2)
           \\     [depth cam  ->]     //
-           \\   [video cam   ->]    //
+           \\   [video+thermal->]  //
             \\  +--------------+   //
              \\ | GNSS mast    |  //        mesh antennas on the rear arms,
               \\| Orin NX + fan| //         vertical, away from the GNSS
                \|  FC / ESC    |/
                 |  UWB (top)   |
-               /|  battery     |\           battery slides in from the rear,
-              //+--------------+ \\         CG is set by its position
+               /| pack A|pack B|\           two 97 Wh packs side by side,
+              //+--------------+ \\         slide in from the rear; CG set by them
              //                   \\
             //   ant         ant   \\
         (M4)                         (M3)
@@ -82,7 +87,7 @@ want a 5-inch scout later, it would drop the 3D lidar and Orin and work as a
      GNSS puck ---+         UWB antenna (top, clear view all round)
                   |           |
    ===prop====[ top plate: Orin, FC/ESC stack ]====prop===
-   depth+video cam>[       battery tray         ]
+   depth/video/thermal>[ battery tray (2 packs) ]
                    [  belly: down cam, flow/ToF ]
                          \   Mid-360    /      <- lidar mounted upside down,
                           \  (inverted) /         FOV -52..+7 deg (sees ground
@@ -111,17 +116,22 @@ pass and log raw IMU data at 1 kHz on the bench.
 ### 3.3 Electrical and data
 
 ```
- 6S Li-ion ──┬── 4-in-1 ESC ── motors
-             ├── Mid-360 (9–27 V input, runs direct from 6S)
-             ├── 12 V buck ── Orin NX carrier ── 5 V USB rail
-             └── 5 V BEC ── FC, GNSS, RC rx, UWB, cameras
-             (current sensor -> FC; ideal diode on charge input)
+ pack A (6S1P) ─┐
+                ├─ ideal-diode OR-ing (no cross-charging; either pack alone can fly)
+ pack B (6S1P) ─┘
+   6S bus ──┬── 4-in-1 ESC ── motors
+            ├── Mid-360 (9–27 V input, runs direct from 6S)
+            ├── 12 V buck ── Orin NX carrier ── 5 V USB rail
+            └── 5 V BEC ── FC, GNSS, RC rx, UWB, cameras
+            (current sensor -> FC; per-pack voltage to FC; ideal diode + fuse
+             on the charge input, which charges both packs through their own BMS)
 
  Orin NX
   ├─ Ethernet ── Mid-360 (point cloud + IMU, PTP time sync)
   ├─ Ethernet/USB ── mesh radio
   ├─ USB 3 ── stereo depth camera
   ├─ CSI ── 12 MP video camera; CSI ── downward camera
+  ├─ SPI + I2C ── Lepton 3.5 thermal (or USB via a PureThermal board)
   ├─ SPI/UART ── UWB module
   └─ UART/Eth ── FC  (uXRCE-DDS: /fmu/in/vehicle_visual_odometry, offboard setpoints)
 
@@ -141,24 +151,29 @@ merit 0.62, drivetrain 80 %, sea level, landing at 20 % reserve):
 
 | Variant | Mass | Avionics | Total power | Pack | Hover endurance |
 |---|---|---|---|---|---|
-| **baseline**: 7 in, Orin NX, depth camera | 1604 g | 30 W | 285 W | 97 Wh (6S1P) | **16.4 min** |
-| long_endurance: 8 in, 6S2P | 2118 g | 30 W | 369 W | 194 Wh (6S2P) | 25.3 min |
-| light: 7 in, VOXL 2-class SoC, no separate depth camera | 1444 g | 22 W | 239 W | 97 Wh | 19.5 min |
+| **baseline**: 8 in, two 6S1P packs, Orin NX, depth + thermal cameras | 2153 g | 30.5 W | 378 W | 2 × 97 Wh | **24.7 min** |
+| compact_7in: the earlier 7 in proposal, one pack | 1609 g | 30 W | 287 W | 97 Wh | 16.3 min |
+| light_7in: 7 in, VOXL 2-class SoC, no separate depth camera | 1449 g | 22 W | 241 W | 97 Wh | 19.4 min |
 
-- The Orin NX is ~45 % of the avionics power. Run it in a 15 W mode. If detection
-  can be done on the robot from streamed keyframes, the "light" variant gives
-  3 minutes back.
-- Li-ion (21700) beats LiPo here: the hover draw is ~12 A, well inside the
-  cells' continuous rating, and the energy density is ~40 % higher. Below ~5 °C the
-  pack sags, so derate endurance by 15–25 % in cold weather (the steep/cold terrain
-  case in the requirements).
-- 97 Wh is under the common 100 Wh shipping and airline limit. The 6S2P pack is not.
-- Hover thrust per motor is ~400 g. A 2807 motor on 7-inch props gives ~4:1
+- **Why not P50B cells.** 5.0 Ah cells would add ~4 min, but each pack would then hold
+  108 Wh, over the 100 Wh airline and shipping limit that the two-pack layout exists
+  to stay under. Use 4.5 Ah cells (Molicel P45B class), or choose 5.0 Ah cells and
+  accept the airline-approval paperwork (100–160 Wh) instead.
+- **Two packs in parallel.** Each pack has its own BMS and connector, and they are
+  joined through ideal diodes so neither charges the other. If one pack faults, the
+  other carries the drone home at reduced endurance. It also allows a
+  one-pack-at-a-time swap in Phase 5 if turnaround becomes the bottleneck.
+- The Orin NX is ~45 % of the avionics power. Run it in a 15 W mode.
+- Li-ion (21700) beats LiPo here: the hover draw is ~17.5 A total, ~9 A per pack,
+  well inside the cells' continuous rating, and the energy density is ~40 % higher.
+  Below ~5 °C the pack sags, so derate endurance by 15–25 % in cold weather (still
+  ~19 min).
+- Hover thrust per motor is ~540 g. A 2810 motor on 8-inch props gives ~3.5–4:1
   thrust-to-weight, which is enough to fight gusts and to climb hard when aborting a
   dock approach.
-- **Robot payload:** with 2 drones + dock + charger at ~5 kg, a Unitree Go2 is near
-  its practical limit. Carrying 3–4 drones calls for a B2-, Spot- or ANYmal-class
-  robot, or a stacked drone rack.
+- **Robot payload:** a B2-class robot carries the dock, charger and 3–4 drones
+  (~2.15 kg each) with room left over. A Go2 would be marginal even for one 8-inch
+  drone plus dock.
 
 ---
 
@@ -171,7 +186,7 @@ merit 0.62, drivetrain 80 %, sea level, landing at 20 % reserve):
 | 3D lidar + IMU #2 | Livox Mid-360 | 360° x 59°, 0.1 m minimum range, ~265 g, ~6.5 W, built-in IMU, Ethernet | Unitree 4D L1 is a lighter, cheaper option with a sparser scan |
 | Depth + IMU #3 | Intel RealSense D435i, or Luxonis OAK-D Pro W | Forward obstacle depth from 0.2 m. Its IR stereo pair also feeds VIO fallback | Pick global shutter for VIO |
 | Video | 12 MP CSI module (IMX477 class), or IMX296 global shutter | Operator imagery and survivor detection crops | Stream low-res live; store full-res keyframes |
-| Thermal (optional, SAR) | Teledyne FLIR Boson 320 / Lepton 3.5 | Person detection under canopy and at dusk | Lepton for budget, Boson for range |
+| Thermal (SAR) | Teledyne FLIR Lepton 3.5 (160x120, ~5 g, ~$250) | Finds warm bodies in canopy shade or partly covered, where RGB misses them | Short range: plan thermal passes at lower altitude. Boson 320 is the upgrade if range matters and budget allows |
 | Dock camera | OV9281 global-shutter module, down-facing | AprilTag pose on final approach | Rear belly, clear of the lidar |
 | Flow + range | ARK Flow (PAW3902 + AFBR-S50) | Low-altitude height/velocity, and a last-ditch navigation source | Feeds PX4 EKF2 directly |
 | GNSS | u-blox M10 + compass | Geo-referencing when available. Spoofing check against LIO | Mast-mounted, away from radios |
@@ -188,7 +203,7 @@ merit 0.62, drivetrain 80 %, sea level, landing at 20 % reserve):
 ```
             dock, top view                         section A-A
 
-        tags   ┌─────────────────┐          mouth Ø ~400 mm
+        tags   ┌─────────────────┐          mouth Ø ~500 mm
          ▣     │   ╲         ╱   │   ▣       ╲                 ╱   25–30° walls,
                │    ╲ ┌───┐ ╱    │            ╲    ┌─────┐    ╱    low-friction
                │     ╲│ ● │╱     │             ╲   │ lid │   ╱     coating
@@ -199,7 +214,7 @@ merit 0.62, drivetrain 80 %, sea level, landing at 20 % reserve):
                                                   spring-damped plate on the robot's back
 ```
 
-- **Passive capture.** A shallow funnel (~400 mm mouth, 25–30° walls) turns a
+- **Passive capture.** A shallow funnel (~500 mm mouth, 25–30° walls) turns a
   ±150 mm landing error into a centred, seated drone. The collar is circular, so
   **yaw does not matter**. That cuts out a whole alignment step and makes docking on a
   moving robot practical later.
@@ -207,12 +222,19 @@ merit 0.62, drivetrain 80 %, sea level, landing at 20 % reserve):
   collar. EPMs only draw power for the pulse that switches them on or off, so a robot
   power loss keeps drones latched. Putting the EPM on the dock keeps its weight off
   the drone. Size it to hold more than 5 g of shock load (quadruped stumble):
-  1.6 kg × 5 g ≈ 80 N, so target ≥ 150 N.
+  2.15 kg × 5 g ≈ 105 N, so target ≥ 200 N.
 - **Charging.** Two coaxial copper rings on the collar's underside meet spring pogo
   rings in the dock. Polarity is fixed by the geometry, whatever the yaw. The charger
   stays off until the drone reports *latched* and passes a handshake. The drone has
   an ideal-diode input and a fuse. The dock has a temperature sensor and a smoke
   sensor (README battery-safety rule).
+- **Charge rate.** Contact charging at ~1C: ~9 A at 25.2 V, ~230 W per drone, about
+  60–75 min from the return threshold to full (CC-CV). One sortie per drone per
+  60-minute mission is accepted for v1. The charger and the robot's power tap are
+  sized for **two docks** (~2 × 250 W). The energy manager (F-7) counts recharging
+  against the robot's own range. Battery swapping is deferred to Phase 5.
+- **Deck layout.** One dock in the first build. The deck plate has rails for a second
+  dock front-to-back. The 3–4 drone stacked rack is designed in Phase 5.
 - **Fiducials.** An AprilTag bundle round the rim (large tags for acquisition at
   2–4 m) and a small nested tag on the lid for the last 0.5 m. Add IR LEDs for
   low light.
@@ -246,7 +268,7 @@ merit 0.62, drivetrain 80 %, sea level, landing at 20 % reserve):
    go to a stationary landing instead).
 
 Downwash: keep the robot's lidar and cameras clear of the funnel area, or blank
-them during docking. Expect ~30 N of downwash on the dock plate.
+them during docking. Expect up to ~21 N of downwash (the drone's weight) on the dock plate in the last metre.
 
 ---
 
@@ -392,7 +414,7 @@ put the same estimator in the Gazebo multi-drone sim with a UWB range plugin.
 
 | Phase | Drone-design work |
 |---|---|
-| 1 (now) | Replace `x500_lidar_2d` with an x500 or custom 7-inch SDF carrying a Mid-360-pattern `gpu_lidar` mounted upside down plus a depth camera. Add a UWB range plugin (noise, NLOS, cutoff as in the numpy sim). Dock model with funnel + tags |
+| 1 (now) | Replace `x500_lidar_2d` with a custom 8-inch SDF (two-pack mass and inertia from §4) carrying a Mid-360-pattern `gpu_lidar` mounted upside down plus depth and thermal cameras. Add a UWB range plugin (noise, NLOS, cutoff as in the numpy sim). Dock model with funnel + tags |
 | 2 | Build one drone. Bench-measure mass and power and update `drone_budget.py`. Tethered tests, then stationary dock landings (20 in a row) |
 | 3 | Robot-frame shared map: the dock as the shared origin, then UWB + loop-closure factors |
 | 4 | Moving-dock landing (§6.3) behind a feature flag |
@@ -401,18 +423,33 @@ put the same estimator in the Gazebo multi-drone sim with a UWB range plugin.
 
 ## 10. Risks and open questions
 
-1. **Endurance margin at 7 inches is thin** (16 min modelled, before cold derating).
-   Measure early. Fallbacks: the 8-inch variant, or moving detection to the robot.
-2. **Robot payload.** A Go2 is marginal beyond 1–2 drones. Decide on the robot
-   platform before designing the dock rack.
-3. **Lidar under the belly.** The collar clearance and the lidar window's exposure to
+1. **Endurance is modelled, not measured** (~25 min, ±15 %). Bench-test thrust and
+   power early and update `drone_budget.py`.
+2. **Turnaround.** At 1C a drone is out of action for over an hour after each sortie.
+   Fine for one drone in v1; revisit (pack swap or 2C cells) in Phase 5.
+3. **8-inch near trees.** A ~550 mm drone needs wider gaps than a 7-inch. Set the
+   avoidance clearance from the real prop-tip radius in the sim.
+4. **Lidar under the belly.** The collar clearance and the lidar window's exposure to
    dirt need a CAD check and a guard.
-4. **UWB in dense forest.** Range and NLOS rates are guesses. Do a range survey at
+5. **UWB in dense forest.** Range and NLOS rates are guesses. Do a range survey at
    the test site (trunk density matters most).
-5. **Moving-dock landing is outside the v1 scope.** It needs a requirements change
-   before Phase 4 work.
-6. **Export control.** GPS-denied swarm navigation and anti-jam comms may be
+6. **Moving-dock landing is outside the v1 scope** (§11, D2). It needs a requirements
+   change before Phase 4 work.
+7. **Export control.** GPS-denied swarm navigation and anti-jam comms may be
    controlled technology. Follow the README's guidance before sharing.
+
+## 11. Decisions log
+
+| # | Decision (2026-11-04) | Alternatives considered |
+|---|---|---|
+| D1 | Unitree B2-class robot | Go2 (payload too marginal), Spot/ANYmal (cost) |
+| D2 | Land while stationary in v1; moving landing in Phase 4+ | Moving landing in v1; stationary only, ever |
+| D3 | ~$4–5k per drone: Mid-360, Orin NX, field-grade mesh radio, onboard detection | ~$2–2.5k build (L1 lidar, VOXL-class, 802.11s) |
+| D4 | 8-inch frame, ~25 min hover | 7-inch (~16 min, or ~18 min with P50B cells) |
+| D5 | Lepton 3.5 thermal camera in v1 | Boson 320 (over budget); RGB only |
+| D6 | Two 6S1P packs (97 Wh each) in parallel | One 6S2P pack (dangerous-goods shipping, single point of failure) |
+| D7 | One dock now, deck rails and charger sized for two | Two docks now; 3–4 drone rack now |
+| D8 | Contact charging at ~1C; swapping deferred to Phase 5 | Swap one pack; 2C fast charge |
 
 ## References
 
