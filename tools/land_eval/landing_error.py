@@ -9,8 +9,11 @@ pad_detector's estimates were if /landing_pad was recorded too.
         --qos-profile-overrides-path ../avoid_eval/qos.yaml
     python3 landing_error.py <world.sdf> ~/land_1 [~/land_2 ...]
 
-Assumes the drone spawned at the world origin (PX4's default), so PX4's local
-frame (NED) and the world (ENU) differ only in axis order. Use --spawn E N if not.
+Uses the simulator's true pose (/sim/ground_truth/odometry) when it was recorded:
+needed without GPS, where PX4's own estimate drifts. Otherwise uses PX4's local
+position and assumes the drone spawned at the world origin (--spawn E N if not).
+Note: pad_detector's estimates are in PX4's frame, so with drift their "off by"
+includes the drift.
 Needs ROS 2 and px4_msgs sourced.
 """
 import argparse
@@ -19,6 +22,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import rosbag2_py
 from geometry_msgs.msg import PointStamped
+from nav_msgs.msg import Odometry
 from px4_msgs.msg import VehicleLocalPosition
 from rclpy.serialization import deserialize_message
 
@@ -40,18 +44,23 @@ def read(bag):
     reader = rosbag2_py.SequentialReader()
     reader.open(rosbag2_py.StorageOptions(uri=bag, storage_id='mcap'),
                 rosbag2_py.ConverterOptions('', ''))
-    pos, pads = [], []
+    pos, pads, truth = [], [], []
     while reader.has_next():
         topic, raw, _ = reader.read_next()
-        if topic.endswith('vehicle_local_position_v1'):
+        if topic == '/sim/ground_truth/odometry':
+            p = deserialize_message(raw, Odometry).pose.pose.position
+            truth.append((p.x, p.y, -p.z))                      # world E, N, down
+        elif topic.endswith('vehicle_local_position_v1'):
             m = deserialize_message(raw, VehicleLocalPosition)
             pos.append((m.y, m.x, m.z))                       # E, N, down
         elif topic.endswith('landing_pad'):
             m = deserialize_message(raw, PointStamped)
             pads.append((m.point.y, m.point.x))               # E, N
+    if truth:          # true pose, world frame: needs no spawn offset
+        return np.array(truth), np.array(pads), True
     if not pos:
-        raise SystemExit(f'No vehicle_local_position_v1 in {bag}')
-    return np.array(pos), np.array(pads)
+        raise SystemExit(f'No vehicle_local_position_v1 or ground truth in {bag}')
+    return np.array(pos), np.array(pads), False
 
 
 def main():
@@ -62,14 +71,15 @@ def main():
     ap.add_argument('--spawn', type=float, nargs=2, default=(0.0, 0.0), metavar=('E', 'N'))
     a = ap.parse_args()
 
-    pe, pn = pad_position(a.world)
-    pe, pn = pe - a.spawn[0], pn - a.spawn[1]                 # into PX4's local frame
-    print(f'pad centre: E={pe:+.2f} N={pn:+.2f} m from the spawn point')
+    pad_world = pad_position(a.world)
+    print(f'pad centre in the world: E={pad_world[0]:+.2f} N={pad_world[1]:+.2f}')
     print(f'{"flight":24s} {"touchdown E, N":>16s} {"error":>8s} {"on pad":>7s} '
           f'{"took off":>9s} {"pad estimates":>22s}')
     errors = []
     for bag in a.bags:
-        pos, pads = read(bag)
+        pos, pads, is_truth = read(bag)
+        # Ground truth is in world coordinates; PX4's estimate is relative to spawn.
+        pe, pn = pad_world if is_truth else (pad_world[0] - a.spawn[0], pad_world[1] - a.spawn[1])
         end, start = pos[-1], pos[0]
         if end[2] - pos[:, 2].min() < 1.0:
             print(f'{bag.rstrip("/").split("/")[-1]:24s} never flew; skipped')
@@ -82,7 +92,8 @@ def main():
         est = (f'{len(pads)}, off by {np.hypot(pads[:, 0].mean() - pe, pads[:, 1].mean() - pn) * 100:.1f} cm'
                if len(pads) else '-')
         print(f'{bag.rstrip("/").split("/")[-1]:24s} {end[0]:+7.2f}, {end[1]:+6.2f} '
-              f'{err * 100:6.1f} cm {"yes" if on_pad else "NO":>7s} {took_off:7.2f} m {est:>22s}')
+              f'{err * 100:6.1f} cm {"yes" if on_pad else "NO":>7s} {took_off:7.2f} m {est:>22s}'
+              f'{"" if is_truth else "  (PX4 estimate)"}')
     if len(errors) > 1:
         e = np.array(errors) * 100
         print(f'\n{len(e)} landings: mean {e.mean():.1f} cm, max {e.max():.1f} cm, '

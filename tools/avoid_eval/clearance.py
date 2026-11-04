@@ -28,6 +28,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import rosbag2_py
+from nav_msgs.msg import Odometry
 from px4_msgs.msg import VehicleLocalPosition
 from rclpy.serialization import deserialize_message
 
@@ -65,18 +66,35 @@ def surface_distance(e, n, obs):
 
 
 def read_positions(bag):
+    """(t, e, n, down, ve, vn) rows, and the source used.
+
+    Uses the simulator's true pose (/sim/ground_truth/odometry, world frame) when it
+    was recorded: without GPS, PX4's own estimate drifts and would hide the very
+    errors being measured. Otherwise PX4's local position (accurate with sim GPS;
+    assumes the drone spawned at the world origin).
+    """
     reader = rosbag2_py.SequentialReader()
     reader.open(rosbag2_py.StorageOptions(uri=bag, storage_id='mcap'),
                 rosbag2_py.ConverterOptions('', ''))
-    rows = []
+    truth, local = [], []
     while reader.has_next():
         topic, raw, stamp = reader.read_next()
-        if topic.endswith('vehicle_local_position_v1'):
+        if topic == '/sim/ground_truth/odometry':
+            p = deserialize_message(raw, Odometry).pose.pose.position
+            truth.append((stamp * 1e-9, p.x, p.y, -p.z))
+        elif topic.endswith('vehicle_local_position_v1'):
             m = deserialize_message(raw, VehicleLocalPosition)
-            rows.append((stamp * 1e-9, m.y, m.x, m.z, m.vy, m.vx))   # ENU e, n; z down
-    if not rows:
-        raise SystemExit(f'No vehicle_local_position_v1 in {bag} (see qos.yaml in --help)')
-    return np.array(rows)
+            local.append((stamp * 1e-9, m.y, m.x, m.z, m.vy, m.vx))   # ENU e, n; z down
+    if truth:
+        a = np.array(truth)
+        ve = np.gradient(a[:, 1], a[:, 0])
+        vn = np.gradient(a[:, 2], a[:, 0])
+        return np.column_stack([a, ve, vn]), 'simulator ground truth'
+    if not local:
+        raise SystemExit(f'No vehicle_local_position_v1 or ground truth in {bag} '
+                         '(see qos.yaml in --help)')
+    return np.array(local), "PX4's position estimate"
+
 
 
 def main():
@@ -90,7 +108,7 @@ def main():
     a = ap.parse_args()
 
     obs = obstacles(a.world)
-    pos = read_positions(a.bag)
+    pos, source = read_positions(a.bag)
     pos = pos[-pos[:, 3] > a.min_alt]
     if not len(pos):
         raise SystemExit('The drone never flew above --min-alt.')
@@ -106,7 +124,7 @@ def main():
     dt = np.minimum(step, 3 * normal)
     gaps = step > 0.5
 
-    print(f'{len(c)} samples over {t[-1]:.0f} s in the air')
+    print(f'{len(c)} samples over {t[-1]:.0f} s in the air (from {source})')
     if gaps.any():
         print(f'note: {gaps.sum()} gaps in the recording ({step[gaps].sum():.0f} s with no'
               f' position data, longest {step.max():.1f} s); times below cover the rest')

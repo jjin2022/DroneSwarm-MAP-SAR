@@ -172,7 +172,8 @@ the reference world for avoidance and mapping tests.
 │   ├── simulation_test_11126.md    # Lidar sim test checklist
 │   └── *.pdf                       # Requirements and scope; SAR statistics
 ├── scripts/
-│   └── demo_patrol_lidar.sh        # Start/stop the whole sim + patrol_lidar; saves nothing
+│   ├── demo_patrol_lidar.sh        # Start/stop the whole sim + patrol_lidar; saves nothing
+│   └── px4_nogps.sh                # Start PX4 without GPS (own params folder)
 ├── tools/
 │   ├── tracer_eval/                # Score the object tracer on recorded flights (no sim needed)
 │   ├── avoid_eval/                 # Measure real clearance to obstacles in a recorded flight

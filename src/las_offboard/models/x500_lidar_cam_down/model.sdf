@@ -68,5 +68,20 @@
       <parent>base_link</parent>
       <child>camera_link</child>
     </joint>
+
+    <!-- True position for the simulated visual odometry (sim_vio), which adds
+         drift and feeds PX4 so it can fly without GPS. Only sim_vio (and test
+         tools) may use it.
+         The topics are renamed on purpose: PX4's own Gazebo bridge subscribes to
+         the default /model/<name>/odometry_with_covariance and would feed PX4 a
+         second, PERFECT position, silently cancelling most of the drift.
+         (Fixed names: one drone per world.) -->
+    <plugin filename="gz-sim-odometry-publisher-system"
+            name="gz::sim::systems::OdometryPublisher">
+      <dimensions>3</dimensions>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <odom_topic>/sim/ground_truth/odometry</odom_topic>
+      <odom_covariance_topic>/sim/ground_truth/odometry_with_covariance</odom_covariance_topic>
+    </plugin>
   </model>
 </sdf>

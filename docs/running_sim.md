@@ -271,6 +271,55 @@ the pad centre. Measure landings with `tools/land_eval/landing_error.py`.
 OpenCV can't load with it; the node detects this and restarts itself with
 user packages turned off (`PYTHONNOUSERSITE=1`), so nothing needs changing.
 
+### Flying without GPS
+
+GPS is only a fallback: the drone has to work without it. In the simulator,
+`sim_vio` stands in for visual odometry: it takes the drone's true position from
+Gazebo, adds drift that grows with distance flown (default 1%, like a real VIO),
+and feeds PX4, with PX4's GPS use turned off. Everything else (patrol_lidar,
+pad_detector) works from PX4's drifting estimate, as on a real drone; the camera
+landing is what corrects the drift at the end.
+
+Needs the camera drone model (link it as in "Precision landing on the pad").
+
+| Terminal | Command |
+|---|---|
+| 1 DDS agent | `MicroXRCEAgent udp4 -p 8888` |
+| 2 Gazebo | as usual (`simulation-gazebo --world forest_pillars ...`) |
+| 3 PX4 | `~/dev/DroneSwarm-MAP-SAR/scripts/px4_nogps.sh forest_pillars` |
+| 4 Bridge | `ros2 launch las_offboard lidar_bridge.launch.py world:=forest_pillars model:=x500_lidar_cam_down_0 camera:=true vio:=true` |
+| 5 QGroundControl | as usual |
+| 6 sim_vio | `ros2 run las_offboard sim_vio` (`-p drift_percent:=2.0` for a worse VIO) |
+| 7 pad_detector | `ros2 run las_offboard pad_detector` |
+| 8 patrol_lidar | as for precision landing |
+
+**Always start PX4 with `scripts/px4_nogps.sh`**, not by hand. PX4 saves every
+parameter change, and unless told otherwise always runs in
+`build/px4_sitl_default/rootfs`, so GPS-off settings set any other way end up in
+your normal parameters, and your next normal run has no GPS and no position.
+The script runs PX4 in its own folder (`rootfs_nogps`), copies your normal
+parameters in first (battery drain, RC mode, calibration), and only then turns
+GPS off. If it ever does happen, normal PX4 refuses to arm or reports no
+position: delete `EKF2_GPS_CTRL`, `EKF2_EV_CTRL` and `EKF2_HGT_REF` from
+`rootfs/parameters.bson` (or `param reset` them at `pxh>`).
+
+Two traps this setup avoids, in case you change it:
+- **Only one `sim_vio`.** Two left running feed PX4 two different drifts and it
+  averages them. `sim_vio` stops sending if it sees another publisher.
+- **The ground-truth topic has a non-default name** (`/sim/ground_truth/odometry`).
+  PX4's own Gazebo bridge listens for `/model/<name>/odometry_with_covariance`
+  and would feed PX4 a perfect position alongside `sim_vio`'s drifted one.
+
+To measure a GPS-free flight, record `/sim/ground_truth/odometry` too:
+`avoid_eval` and `land_eval` then use the true position instead of PX4's
+drifting estimate.
+
+**Results (2026-11-04)**, `forest_pillars`, pad at take-off, 1% drift: after
+45 m flown (0.42 m drift) the drone came home 61 cm off the real pad and landed
+2.3 cm from its centre; after 92 m (0.77 m drift), 76 cm off and landed 4.9 cm
+from centre. PX4's estimate was off by exactly the injected drift, so the
+landing accuracy comes from the camera.
+
 ## 5. Checks
 
 ```bash

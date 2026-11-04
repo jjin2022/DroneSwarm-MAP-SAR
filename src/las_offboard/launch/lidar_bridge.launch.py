@@ -16,6 +16,9 @@ WHAT YOU GET IN ROS 2
   with camera:=true (drone model x500_lidar_cam_down only):
     /camera/image_raw    sensor_msgs/msg/Image       downward camera, 640x480, 15 Hz
     /camera/camera_info  sensor_msgs/msg/CameraInfo  its intrinsics
+  with vio:=true (x500_lidar_cam_down only), for flying without GPS:
+    /sim/ground_truth/odometry  nav_msgs/msg/Odometry  the drone's TRUE pose; only
+                                sim_vio (and test tools) may use it
 
 HOW TO RUN
 ----------
@@ -45,6 +48,7 @@ def make_bridge(context):
     world = LaunchConfiguration('world').perform(context)
     model = LaunchConfiguration('model').perform(context)
     camera = LaunchConfiguration('camera').perform(context).lower() == 'true'
+    vio = LaunchConfiguration('vio').perform(context).lower() == 'true'
 
     # The full Gazebo topic of the lidar. PX4 names the spawned drone
     # "<model>_<instance>", e.g. x500_lidar_2d_0 for `make px4_sitl`.
@@ -73,6 +77,11 @@ def make_bridge(context):
         ]
         remappings += [(f'{gz_cam}/image', '/camera/image_raw'),
                        (f'{gz_cam}/camera_info', '/camera/camera_info')]
+    if vio:
+        # True pose from the model's OdometryPublisher plugin, for sim_vio. The
+        # model publishes it under this fixed name (not /model/<name>/...), which
+        # keeps PX4's own Gazebo bridge from using it as a perfect position.
+        bridge_args.append('/sim/ground_truth/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry')
 
     return [Node(
         package='ros_gz_bridge',          # installed by: sudo apt install ros-jazzy-ros-gz-bridge
@@ -99,6 +108,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'camera', default_value='false',
             description='Also bridge the downward camera (x500_lidar_cam_down only)'),
+        DeclareLaunchArgument(
+            'vio', default_value='false',
+            description='Also bridge the true pose for sim_vio (x500_lidar_cam_down only)'),
         # OpaqueFunction lets us run Python (make_bridge) with the argument values.
         OpaqueFunction(function=make_bridge),
     ])
