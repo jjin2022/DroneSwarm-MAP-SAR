@@ -96,8 +96,10 @@ stop() {
         for p in $pids; do kill -KILL -- "-$p" 2>/dev/null; kill -KILL "$p" 2>/dev/null; done
         rm -f "$SHELLS"
     fi
-    # Anything that escaped its group (Gazebo's server/GUI, PX4) on a second pass.
+    # Anything that escaped its group (Gazebo's server/GUI, PX4, the QGC AppImage
+    # launcher) on a second pass.
     pkill -KILL -f 'gz sim|px4_sitl_default/bin/px4|MicroXRCEAgent|parameter_bridge' 2>/dev/null
+    [ -n "$QGC" ] && pkill -KILL -f "$(basename "$QGC")" 2>/dev/null
     echo "Demo stopped."
 }
 
