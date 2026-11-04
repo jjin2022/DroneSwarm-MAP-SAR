@@ -235,6 +235,7 @@ it, it lands normally. For a short test flight, add `-p return_battery:=0.93`
 | `land_handoff_height_m` | 0.6 | Height at which PX4 takes over the last part |
 | `pad_lost_timeout_s` | 5.0 | Pad not seen this long: normal landing where it is |
 | `precision_land_timeout_s` | 60.0 | Whole precision landing longer than this: normal landing |
+| `dock_e`, `dock_n` | 0.0 | Roughly where the pad is (m east/north of home): the drone returns there, then the camera finds the pad. 0, 0 = home |
 
 **Results (2026-11-04)**, touchdown distance from the pad's true centre:
 
@@ -247,6 +248,24 @@ With the pad where it took off, the simulator's near-perfect position estimate
 already brings the drone back onto it; the ~10 cm both ways is PX4's final
 descent. Precision landing matters when the drone doesn't know exactly where
 the pad is: a dock that moved, or real GPS drift.
+
+**Pad somewhere else in the forest.** `src/las_offboard/worlds/random_pad.py` puts
+the pad at a random clear spot (at least 1.0 m from every trunk, at least 2 m from
+the spawn point) and writes `forest_pillars_random_pad.sdf`. It prints the
+`dock_e`/`dock_n` to give `patrol_lidar`; `--hint-error 0.8` makes them 0.8 m wrong,
+like a robot that only roughly knows where it is. Keep that under about 1.3 m:
+from 2 m up the camera sees about ±1.4 m around the drone.
+
+```bash
+cd ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/worlds
+python3 random_pad.py --hint-error 0.8      # new spot each run; --seed N to repeat one
+ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/worlds/forest_pillars_random_pad.sdf \
+      ~/dev/PX4-Autopilot/Tools/simulation/gz/worlds/forest_pillars_random_pad.sdf   # once
+```
+Then run as above with `forest_pillars_random_pad` as the world and the printed
+`-p dock_e:=... -p dock_n:=...` added to `patrol_lidar`. Two random spots 4.9 and
+6.7 m from take-off, with the dock position 0.8 m wrong: landed 4.3 and 6.2 cm from
+the pad centre. Measure landings with `tools/land_eval/landing_error.py`.
 
 `pad_detector` uses OpenCV. If a NumPy 2 is installed in `~/.local`, Ubuntu's
 OpenCV can't load with it; the node detects this and restarts itself with

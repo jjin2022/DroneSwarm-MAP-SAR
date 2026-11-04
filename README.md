@@ -175,7 +175,8 @@ the reference world for avoidance and mapping tests.
 │   └── demo_patrol_lidar.sh        # Start/stop the whole sim + patrol_lidar; saves nothing
 ├── tools/
 │   ├── tracer_eval/                # Score the object tracer on recorded flights (no sim needed)
-│   └── avoid_eval/                 # Measure real clearance to obstacles in a recorded flight
+│   ├── avoid_eval/                 # Measure real clearance to obstacles in a recorded flight
+│   └── land_eval/                  # Measure landing error against the pad in a recorded flight
 └── src/
     └── las_offboard/               # ROS 2 Python package (ament_python)
         ├── las_offboard/           # Nodes: takeoff_land, patrol_rtl, patrol_lidar, lidar_test

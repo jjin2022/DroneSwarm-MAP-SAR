@@ -408,6 +408,10 @@ class PatrolLidar(PatrolRtl):
         self.land_handoff = p('land_handoff_height_m', 0.6).value   # then PX4 lands
         self.pad_lost_timeout = p('pad_lost_timeout_s', 5.0).value
         self.precision_timeout = p('precision_land_timeout_s', 60.0).value
+        # Approximate dock (pad) position, metres east/north of home: where to
+        # fly back to before looking for the pad. (0, 0) = home. On a real robot
+        # this would come from the robot's reported position.
+        self.dock_en = (p('dock_e', 0.0).value, p('dock_n', 0.0).value)
 
         px4_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -829,11 +833,12 @@ class PatrolLidar(PatrolRtl):
         corners = self.corners_home() if self.state == 'PATROL' else []
         self.set_state('RETURN')
         hx, hy, hz, _ = self.home
-        self.route = corners + [(hx, hy, hz - self.alt)]
+        de, dn = self.dock_en
+        self.route = corners + [(hx + dn, hy + de, hz - self.alt)]   # NED: x north, y east
         self.route_index = 0
         path = ' -> '.join(self.label(c) for c in corners)
         self.get_logger().info(
-            f'Returning along the square: {path + " -> " if path else ""}home')
+            f'Returning along the square: {path + " -> " if path else ""}{self.dock_label()}')
 
     def step_return(self):
         goal = self.route[self.route_index]
@@ -848,7 +853,7 @@ class PatrolLidar(PatrolRtl):
                 goal = self.route[self.route_index]
                 last = self.route_index == len(self.route) - 1
                 self.get_logger().info(
-                    f'Return: next {"home" if last else "corner " + self.label(goal)}')
+                    f'Return: next {self.dock_label() if last else "corner " + self.label(goal)}')
         self.target = goal
 
         if last and self.reached(goal):
@@ -859,9 +864,17 @@ class PatrolLidar(PatrolRtl):
             return
         self.hold_ticks = 0
         if last and self.stuck(goal):
-            self.get_logger().warn('Cannot get to home. Holding; take over in QGC if needed.',
-                                   throttle_duration_sec=5.0)
+            # Can't get there (an obstacle near the point?): look for the pad from
+            # here; precision landing falls back to a normal landing if it's not in view.
+            self.get_logger().warn(f'Cannot get to {self.dock_label()}: landing from here.')
+            self.target = (self.pos.x, self.pos.y, goal[2])
+            self.start_precision_land()
+            return
         self.cmd = self.plan_to(goal)
+
+    def dock_label(self):
+        de, dn = self.dock_en
+        return 'home' if not (de or dn) else f'the dock (E={de:.1f}, N={dn:.1f})'
 
     # ---------- precision landing ----------
     def now_s(self):
