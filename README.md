@@ -170,6 +170,7 @@ the reference world for avoidance and mapping tests.
 │   ├── running_sim.md              # Sim commands, node parameters, troubleshooting
 │   ├── demo.md                     # How to run the one-command demo
 │   ├── simulation_test_11126.md    # Lidar sim test checklist
+│   ├── drone-design.md             # Scout drone hardware, docking, GPS-denied swarm localization
 │   └── *.pdf                       # Requirements and scope; SAR statistics
 ├── scripts/
 │   ├── demo_patrol_lidar.sh        # Start/stop the whole sim + patrol_lidar; saves nothing
@@ -177,7 +178,9 @@ the reference world for avoidance and mapping tests.
 ├── tools/
 │   ├── tracer_eval/                # Score the object tracer on recorded flights (no sim needed)
 │   ├── avoid_eval/                 # Measure real clearance to obstacles in a recorded flight
-│   └── land_eval/                  # Measure landing error against the pad in a recorded flight
+│   ├── land_eval/                  # Measure landing error against the pad in a recorded flight
+│   ├── drone_budget.py             # Drone mass / power / endurance estimate
+│   └── swarm_uwb_sim.py            # GPS-loss swarm localization check (numpy)
 └── src/
     └── las_offboard/               # ROS 2 Python package (ament_python)
         ├── las_offboard/           # Nodes: takeoff_land, patrol_rtl, patrol_lidar, lidar_test
@@ -320,9 +323,13 @@ Each phase has an exit criterion. Do not advance until it is met.
 
 > Verify current specs, pricing, and availability with vendors before purchasing.
 
+The proposed scout drone (8-inch FPV-style quad with 3D lidar, depth and thermal
+cameras, mesh + UWB radios, two battery packs and a docking collar), along with the plan for keeping the swarm localized
+without GPS, is in [docs/drone-design.md](docs/drone-design.md).
+
 | Component | Prototype options |
 |---|---|
-| Quadruped | Unitree Go2 (low-cost), Unitree B2 (larger payload), Boston Dynamics Spot or ANYbotics ANYmal (established platforms) |
+| Quadruped | **Chosen: Unitree B2-class** (payload for dock + 3–4 drones). Considered: Unitree Go2 (too little payload), Boston Dynamics Spot or ANYbotics ANYmal (cost) |
 | Drone companion computer | ModalAI VOXL 2 (GPS-denied VIO) or NVIDIA Jetson Orin Nano / NX |
 | Drone sensors | Global-shutter camera, IMU, rangefinder or optical flow, thermal camera (SAR), optional small LiDAR |
 | Robot sensors and compute | LiDAR plus IMU, Jetson Orin-class computer |
