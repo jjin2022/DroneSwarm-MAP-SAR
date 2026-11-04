@@ -18,6 +18,7 @@ setup(
         ('share/' + package_name + '/rviz', glob('rviz/*.rviz')),
         # Drone models (PX4 loads them from its own folder: symlink them there, see docs).
         ('share/' + package_name + '/models/x500_lidar_cam_down', glob('models/x500_lidar_cam_down/*')),
+        ('share/' + package_name + '/models/robot_dock', glob('models/robot_dock/*')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

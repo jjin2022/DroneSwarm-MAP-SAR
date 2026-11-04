@@ -30,14 +30,15 @@ PAD_HALF = 0.25     # PX4's arucotag is 0.5 x 0.5 m
 
 
 def pad_position(world_file):
-    """(E, N) of the include or model named landing_pad."""
+    """(E, N) of the pad: the include/model named landing_pad, or the robot_dock
+    (pad centred on its back)."""
     world = ET.parse(world_file).getroot().find('world')
     for el in list(world.findall('include')) + list(world.findall('model')):
         name = el.findtext('name') if el.tag == 'include' else el.get('name')
-        if name == 'landing_pad':
+        if name in ('landing_pad', 'robot_dock'):
             e, n = (float(v) for v in el.findtext('pose').split()[:2])
             return e, n
-    raise SystemExit(f'No landing_pad in {world_file}')
+    raise SystemExit(f'No landing_pad or robot_dock in {world_file}')
 
 
 def read(bag):

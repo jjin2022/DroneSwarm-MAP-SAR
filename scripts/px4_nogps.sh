@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Start PX4 SITL WITHOUT GPS, flying on simulated visual odometry (sim_vio).
 #
-#   scripts/px4_nogps.sh [world]        (default world: forest_pillars)
+#   scripts/px4_nogps.sh [world] [spawn pose]   (default world: forest_pillars)
+#
+#   spawn pose: "x,y,z" (m) where the drone starts; e.g. "0,0,0.46" on top of the
+#   robot in forest_pillars_robot. Default: the world origin, on the ground.
 #
 # Run it in the PX4 terminal, after Gazebo is up (see docs/running_sim.md,
 # "Flying without GPS"). It:
@@ -20,6 +23,7 @@
 set -eu
 
 WORLD=${1:-forest_pillars}
+POSE=${2:-${PX4_GZ_MODEL_POSE:-}}
 PX4_DIR=${PX4_DIR:-$HOME/dev/PX4-Autopilot}
 BUILD=$PX4_DIR/build/px4_sitl_default
 RUN_DIR=$BUILD/rootfs_nogps
@@ -39,7 +43,8 @@ PYTHONPATH=$(strip "${PYTHONPATH:-}"); export PATH LD_LIBRARY_PATH PYTHONPATH
 unset GZ_CONFIG_PATH
 
 cd "$RUN_DIR"
-echo "PX4 without GPS in $RUN_DIR (world $WORLD); your normal parameters are only read."
+echo "PX4 without GPS in $RUN_DIR (world $WORLD${POSE:+, spawn at $POSE}); your normal parameters are only read."
+if [ -n "$POSE" ]; then export PX4_GZ_MODEL_POSE="$POSE"; else unset PX4_GZ_MODEL_POSE; fi
 # -w + the etc folder: without them PX4 ignores the current folder and uses rootfs/.
 exec env PX4_PARAM_EKF2_GPS_CTRL=0 PX4_PARAM_EKF2_EV_CTRL=5 PX4_PARAM_EKF2_HGT_REF=0 \
     PX4_SYS_AUTOSTART=4013 PX4_SIM_MODEL=gz_x500_lidar_cam_down \

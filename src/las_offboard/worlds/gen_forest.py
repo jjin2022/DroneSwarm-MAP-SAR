@@ -66,6 +66,16 @@ PAD_SDF = '''
     </include>'''
 
 
+# The pad on the back of the robot stand-in (models/robot_dock, linked into PX4's
+# models folder). Its platform top is 0.45 m up.
+ROBOT_SDF = '''
+    <include>
+      <uri>model://robot_dock</uri>
+      <name>robot_dock</name>
+      <pose>{e:g} {n:g} 0 0 0 0</pose>
+    </include>'''
+
+
 def trunk_sdf(i, x, y, r, h):
     # Bark-brown, slightly varied so neighbouring trunks are easy to tell apart.
     shade = 0.30 + 0.10 * ((i * 37) % 7) / 6.0
@@ -99,6 +109,9 @@ def main():
     ap.add_argument('--name', default='forest_pillars', help='world name (= file name and PX4_GZ_WORLD)')
     ap.add_argument('--no-pad', dest='pad', action='store_false',
                     help="leave out the landing pad (PX4's 0.5 m ArUco marker, ID 0)")
+    ap.add_argument('--robot', action='store_true',
+                    help='put the pad on the robot_dock model (0.45 m up) instead of the '
+                         'ground; spawn the drone on it with PX4_GZ_MODEL_POSE="E,N,0.46"')
     ap.add_argument('--pad-pos', type=float, nargs=2, default=(0.0, 0.0), metavar=('E', 'N'),
                     help='pad position (m); default the spawn point. Off the spawn point it '
                          'tests landing on a dock that moved. Keep it inside --spawn-clear.')
@@ -123,7 +136,7 @@ def main():
   {len(trunks)} cylinder trunks in a {a.size:g} x {a.size:g} m square centred on the spawn point,
   >= {a.min_gap:g} m apart (surface to surface), {a.spawn_clear:g} m clear around spawn,
   corners of a {a.patrol:g} m patrol square kept clear. Trunks are 6-10 m tall.
-  {f'Landing pad: {PAD_NOTE} at E={a.pad_pos[0]:g} N={a.pad_pos[1]:g}.' if a.pad else 'No landing pad.'}
+  {(f'Landing pad: on the robot_dock model (pad 0.45 m up) at E={a.pad_pos[0]:g} N={a.pad_pos[1]:g}; spawn the drone with PX4_GZ_MODEL_POSE="{a.pad_pos[0]:g},{a.pad_pos[1]:g},0.46".' if a.robot else f'Landing pad: {PAD_NOTE} at E={a.pad_pos[0]:g} N={a.pad_pos[1]:g}.') if a.pad else 'No landing pad.'}
 
   Link into PX4 once:
     ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/worlds/{a.name}.sdf \\
@@ -131,7 +144,8 @@ def main():
   Coordinates: ENU, x = East, y = North, metres; spawn at (0, 0).
 -->
 '''
-    models = (PAD_SDF.format(e=a.pad_pos[0], n=a.pad_pos[1]) if a.pad else '') + ''.join(trunk_sdf(i + 1, *t) for i, t in enumerate(trunks))
+    pad_sdf = (ROBOT_SDF if a.robot else PAD_SDF).format(e=a.pad_pos[0], n=a.pad_pos[1])
+    models = (pad_sdf if a.pad else '') + ''.join(trunk_sdf(i + 1, *t) for i, t in enumerate(trunks))
     out = header + body + f'<!-- ================= FOREST TRUNKS ({len(trunks)}) ================= -->' \
         + models + '\n  </world>\n</sdf>\n'
     path = os.path.join(HERE, f'{a.name}.sdf')

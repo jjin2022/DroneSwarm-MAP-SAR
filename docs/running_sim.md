@@ -340,6 +340,31 @@ drifting estimate.
 from centre. PX4's estimate was off by exactly the injected drift, so the
 landing accuracy comes from the camera.
 
+### Landing on the robot
+
+`models/robot_dock` stands in for the quadruped: a Go2-sized body with a
+0.70 × 0.60 m platform on its back, top surface 0.45 m up, carrying the same
+ArUco pad. It's static: it stands still while the drone lands (landing on a moving
+robot is a v1 non-goal). `forest_pillars_robot` has it at the spawn point and the
+drone starts on its back.
+
+One-time links (as for the other models and worlds):
+```bash
+ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/models/robot_dock \
+      ~/dev/PX4-Autopilot/Tools/simulation/gz/models/robot_dock
+ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/worlds/forest_pillars_robot.sdf \
+      ~/dev/PX4-Autopilot/Tools/simulation/gz/worlds/forest_pillars_robot.sdf
+```
+Run as in "Flying without GPS", with the world `forest_pillars_robot` and the
+drone spawned on the platform: `scripts/px4_nogps.sh forest_pillars_robot 0,0,0.46`.
+Nothing else changes: "home" is the drone's starting point on the robot, so the
+handover height (0.6 m) is measured from the platform, and PX4's touchdown
+detection works on it. Make other robot worlds with
+`gen_forest.py --robot --pad-pos E N --name ...`.
+
+Tested without GPS: landed 3.2 cm from the pad centre, resting on the platform
+at the same height it took off from.
+
 ## 5. Checks
 
 ```bash
