@@ -222,9 +222,31 @@ class TracedObject:
     def size(self):
         return self.box[1] - self.box[0], self.box[3] - self.box[2]
 
+    def shape(self):
+        """(length, thickness) in metres along / across the footprint's main axis."""
+        if len(self.points) < 3:
+            w, h = self.size()
+            return max(w, h), min(w, h)
+        centred = self.points - self.points.mean(axis=0)
+        _, axes = np.linalg.eigh(np.cov(centred.T))     # columns: minor, major axis
+        along, across = centred @ axes[:, 1], centred @ axes[:, 0]
+        cell = 0.1                                      # map resolution: cells have width
+        return (float(along.max() - along.min()) + cell,
+                float(across.max() - across.min()) + cell)
+
     def kind(self):
-        longest = max(self.size())
-        return 'wall' if longest > 1.5 else 'post' if longest < 0.7 else 'object'
+        """post: small (trunk, pole); wall: long and thin; tree: large irregular
+        clump (a canopy sliced by the lidar, also bushes or rubble); object: the rest.
+
+        Thresholds from labelled recordings (lidar_test, forest_pillars, PX4 forest):
+        walls are >= 4.5x longer than thick, canopy clumps rarely > 4x.
+        """
+        length, thickness = self.shape()
+        if length < 1.0:
+            return 'post'
+        if length >= 1.5:
+            return 'wall' if length >= 4.0 * thickness else 'tree'
+        return 'object'
 
     def describe(self):
         (e, n), (w, h) = self.center(), self.size()
@@ -512,7 +534,8 @@ class PatrolLidar(PatrolRtl):
         clear.header = header
         clear.action = Marker.DELETEALL
         arr.markers.append(clear)
-        colors = {'wall': (0.9, 0.2, 0.2), 'post': (0.2, 0.4, 0.9), 'object': (0.2, 0.8, 0.3)}
+        colors = {'wall': (0.9, 0.2, 0.2), 'post': (0.2, 0.4, 0.9),
+                  'tree': (0.1, 0.6, 0.2), 'object': (0.95, 0.6, 0.1)}
         for obj in self.tracker.confirmed():
             ce, cn = obj.center()
             # The traced outline: one small cube per occupied cell of the object.
