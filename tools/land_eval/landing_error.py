@@ -12,8 +12,10 @@ pad_detector's estimates were if /landing_pad was recorded too.
 Uses the simulator's true pose (/sim/ground_truth/odometry) when it was recorded:
 needed without GPS, where PX4's own estimate drifts. Otherwise uses PX4's local
 position and assumes the drone spawned at the world origin (--spawn E N if not).
-Note: pad_detector's estimates are in PX4's frame, so with drift their "off by"
-includes the drift.
+If robot_sim's /sim/ground_truth/robot was recorded (the robot moved during the
+flight), the pad position is where the robot ended up, not where the world file
+put it. Note: pad_detector's estimates are in PX4's frame, so with drift their
+"off by" includes the drift.
 Needs ROS 2 and px4_msgs sourced.
 """
 import argparse
@@ -45,10 +47,13 @@ def read(bag):
     reader = rosbag2_py.SequentialReader()
     reader.open(rosbag2_py.StorageOptions(uri=bag, storage_id='mcap'),
                 rosbag2_py.ConverterOptions('', ''))
-    pos, pads, truth = [], [], []
+    pos, pads, truth, robot = [], [], [], None
     while reader.has_next():
         topic, raw, _ = reader.read_next()
-        if topic == '/sim/ground_truth/odometry':
+        if topic == '/sim/ground_truth/robot':
+            m = deserialize_message(raw, PointStamped)
+            robot = (m.point.x, m.point.y)                      # world E, N (latest wins)
+        elif topic == '/sim/ground_truth/odometry':
             p = deserialize_message(raw, Odometry).pose.pose.position
             truth.append((p.x, p.y, -p.z))                      # world E, N, down
         elif topic.endswith('vehicle_local_position_v1'):
@@ -58,10 +63,10 @@ def read(bag):
             m = deserialize_message(raw, PointStamped)
             pads.append((m.point.y, m.point.x))               # E, N
     if truth:          # true pose, world frame: needs no spawn offset
-        return np.array(truth), np.array(pads), True
+        return np.array(truth), np.array(pads), True, robot
     if not pos:
         raise SystemExit(f'No vehicle_local_position_v1 or ground truth in {bag}')
-    return np.array(pos), np.array(pads), False
+    return np.array(pos), np.array(pads), False, robot
 
 
 def main():
@@ -78,9 +83,13 @@ def main():
           f'{"took off":>9s} {"pad estimates":>22s}')
     errors = []
     for bag in a.bags:
-        pos, pads, is_truth = read(bag)
+        pos, pads, is_truth, robot = read(bag)
+        # The robot may have moved (robot_sim records where): the pad is on its back.
+        pad = robot if robot is not None else pad_world
         # Ground truth is in world coordinates; PX4's estimate is relative to spawn.
-        pe, pn = pad_world if is_truth else (pad_world[0] - a.spawn[0], pad_world[1] - a.spawn[1])
+        pe, pn = pad if is_truth else (pad[0] - a.spawn[0], pad[1] - a.spawn[1])
+        if robot is not None:
+            print(f'  {bag.rstrip("/").split("/")[-1]}: robot (pad) ended at E={pe:+.2f} N={pn:+.2f}')
         end, start = pos[-1], pos[0]
         if end[2] - pos[:, 2].min() < 1.0:
             print(f'{bag.rstrip("/").split("/")[-1]:24s} never flew; skipped')

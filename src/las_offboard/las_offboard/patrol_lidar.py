@@ -423,6 +423,11 @@ class PatrolLidar(PatrolRtl):
         # fly back to before looking for the pad. (0, 0) = home. On a real robot
         # this would come from the robot's reported position.
         self.dock_en = (p('dock_e', 0.0).value, p('dock_n', 0.0).value)
+        # The robot radios where the dock is now (relative to the take-off point,
+        # from its own odometry). Priority: fresh radio report > last known report
+        # > the dock_e/dock_n setting. (GPS slots in after radio: Phase 1 step 6.)
+        dock_topic = p('dock_topic', '/robot/dock_position').value
+        self.radio_timeout = p('radio_timeout_s', 3.0).value
 
         px4_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -434,6 +439,7 @@ class PatrolLidar(PatrolRtl):
         self.create_subscription(LaserScan, scan_topic, self.on_scan, qos_profile_sensor_data)
         self.create_subscription(VehicleAttitude, att_topic, self.on_att, px4_qos)
         self.pad_sub = self.create_subscription(PointStamped, pad_topic, self.on_pad, 10)
+        self.create_subscription(PointStamped, dock_topic, self.on_dock_report, 10)
         self.map_pub = self.create_publisher(OccupancyGrid, 'map', map_qos)
         self.obj_pub = self.create_publisher(MarkerArray, 'objects', 10)
 
@@ -454,6 +460,9 @@ class PatrolLidar(PatrolRtl):
         self.lidar_ticks = 0
         self.pad = None                     # filtered pad position (x, y, z) NED
         self.pad_time = None                # when it was last seen (s, node clock)
+        self.dock_report = None             # latest radio report (north, east) from take-off
+        self.dock_report_time = None
+        self.dock_source = None             # which source the return is using
         self.land_z = None                  # PRECISION_LAND: current altitude setpoint
         self.dock_point = None              # where precision landing started (NED x, y)
         self.search_pts = []                # PAD_SEARCH waypoints (NED)
@@ -848,7 +857,7 @@ class PatrolLidar(PatrolRtl):
         corners = self.corners_home() if self.state == 'PATROL' else []
         self.set_state('RETURN')
         hx, hy, hz, _ = self.home
-        de, dn = self.dock_en
+        dn, de, self.dock_source = self.dock_offset()
         self.route = corners + [(hx + dn, hy + de, hz - self.alt)]   # NED: x north, y east
         self.route_index = 0
         path = ' -> '.join(self.label(c) for c in corners)
@@ -869,6 +878,8 @@ class PatrolLidar(PatrolRtl):
                 last = self.route_index == len(self.route) - 1
                 self.get_logger().info(
                     f'Return: next {self.dock_label() if last else "corner " + self.label(goal)}')
+        if last:
+            goal = self.update_dock_goal(goal)
         self.target = goal
 
         if last and self.reached(goal):
@@ -887,9 +898,37 @@ class PatrolLidar(PatrolRtl):
             return
         self.cmd = self.plan_to(goal)
 
-    def dock_label(self):
+    def on_dock_report(self, msg):
+        self.dock_report = (msg.point.x, msg.point.y)     # north, east from take-off
+        self.dock_report_time = self.now_s()
+
+    def dock_offset(self):
+        """(north, east, source) of the dock from the take-off point, best source first."""
+        if self.dock_report is not None:
+            age = self.now_s() - self.dock_report_time
+            if age < self.radio_timeout:
+                return self.dock_report[0], self.dock_report[1], 'robot radio'
+            return self.dock_report[0], self.dock_report[1], f'last known (radio silent {age:.0f} s)'
         de, dn = self.dock_en
-        return 'home' if not (de or dn) else f'the dock (E={de:.1f}, N={dn:.1f})'
+        return dn, de, 'setting' if (de or dn) else 'home'
+
+    def update_dock_goal(self, goal):
+        """On the last leg, follow newer radio reports (the robot may have moved)."""
+        hx, hy, hz, _ = self.home
+        dn, de, source = self.dock_offset()
+        new = (hx + dn, hy + de, hz - self.alt)
+        if math.dist(new[:2], goal[:2]) > 0.3 or source.split(' (')[0] != self.dock_source.split(' (')[0]:
+            self.route[-1] = new
+            self.dock_source = source
+            self.get_logger().info(f'Dock target now {self.dock_label()}')
+            return new
+        return goal
+
+    def dock_label(self):
+        dn, de, source = self.dock_offset()
+        if source == 'home':
+            return 'home'
+        return f'the dock (E={de:.1f}, N={dn:.1f}, from {source})'
 
     # ---------- precision landing ----------
     def now_s(self):

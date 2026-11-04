@@ -34,6 +34,7 @@ setup(
             'lidar_test = las_offboard.lidar_test:main',
             'pad_detector = las_offboard.pad_detector:main',
             'sim_vio = las_offboard.sim_vio:main',
+            'robot_sim = las_offboard.robot_sim:main',
         ],
     },
 )

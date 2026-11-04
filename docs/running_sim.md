@@ -365,6 +365,44 @@ detection works on it. Make other robot worlds with
 Tested without GPS: landed 3.2 cm from the pad centre, resting on the platform
 at the same height it took off from.
 
+### Robot that moves while the drone is out
+
+`robot_sim` plays the robot's side: once the drone has been armed for
+`relocate_after_s`, it teleports `robot_dock` to a random clear spot in the forest
+(≥ 1 m from trunks) and once a second radios where the dock now is, relative to
+the take-off point, from its own odometry: `odometry_error_percent` (default 3%)
+of the distance moved, in a random direction. It also publishes the robot's true
+position on `/sim/ground_truth/robot` for `land_eval` (never for the drone).
+
+```bash
+ros2 run las_offboard robot_sim --ros-args -p world:=forest_pillars_robot \
+    -p world_file:=$HOME/dev/DroneSwarm-MAP-SAR/src/las_offboard/worlds/forest_pillars_robot.sdf \
+    -p relocate_after_s:=15.0          # add -p radio_silent_after_s:=25.0 for a radio drop
+```
+Start it with the rest of "Landing on the robot". It assumes the drone took off
+from the robot.
+
+`patrol_lidar` picks where to return to in priority order, and logs which:
+
+| Source | Used when |
+|---|---|
+| Robot radio (`/robot/dock_position`) | A report arrived in the last `radio_timeout_s` (3 s) |
+| Last known position | The radio has gone quiet: the last report heard |
+| `dock_e`/`dock_n` setting, or home | No report ever |
+
+GPS (when available) will slot in after the radio (Phase 1 step 6). While
+returning it follows newer reports, and the camera search covers the error.
+
+Tested without GPS: robot moved 5.4 m (report 0.16 m off) → landed on it 2.7 cm
+from the pad centre; robot moved 6.3 m then went radio-silent → returned to the
+last known position and landed 3.2 cm from centre.
+
+**Open issue (found here):** in one GPS-free flight the drone brushed a trunk at
+0.34 m (contact: propeller tips reach ~0.38 m) while detouring 3 m outside the
+patrol square. Likely cause: obstacle avoidance also uses obstacles remembered on
+the map, which is drawn in the drone's drifting frame, so remembered obstacles
+can be off by the drift (~0.3 m there). Not yet fixed.
+
 ## 5. Checks
 
 ```bash
