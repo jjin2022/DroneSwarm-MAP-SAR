@@ -87,6 +87,7 @@ def read_positions(bag):
             local.append((stamp * 1e-9, m.y, m.x, m.z, m.vy, m.vx))   # ENU e, n; z down
     if truth:
         a = np.array(truth)
+        a = a[np.concatenate([[True], np.diff(a[:, 0]) > 0])]   # drop repeated timestamps
         ve = np.gradient(a[:, 1], a[:, 0])
         vn = np.gradient(a[:, 2], a[:, 0])
         return np.column_stack([a, ve, vn]), 'simulator ground truth'

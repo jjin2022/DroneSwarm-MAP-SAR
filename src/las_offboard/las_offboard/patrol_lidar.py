@@ -456,6 +456,7 @@ class PatrolLidar(PatrolRtl):
         self.prog_ticks = 0
         self.avoid_side = 1                 # +1 = prefer passing on the left
         self.avoiding = False
+        self.plan_goal = None               # goal plan_to last steered toward
         self.lidar_lost_ticks = 0
         self.lidar_ticks = 0
         self.pad = None                     # filtered pad position (x, y, z) NED
@@ -694,10 +695,21 @@ class PatrolLidar(PatrolRtl):
             return goal
         heading = math.atan2(gn - pn, ge - pe)
         step = min(dist, self.speed)     # PX4's position gain is ~1/s, so ~speed m/s
+        # A new goal (next corner, start of the return, a search point) may lie the
+        # other way: drop the side committed to for the old one. Keeping it made the
+        # drone turn round the wrong way past a trunk when the return began.
+        if self.plan_goal is None or math.dist(goal[:2], self.plan_goal[:2]) > 1.0:
+            self.avoiding = False
+        self.plan_goal = goal
         rel = self.obstacle_points(pe, pn)
         if len(rel):
             ranges = np.hypot(rel[:, 0], rel[:, 1])
             k = int(np.argmin(ranges))
+            # Slow down close to obstacles: the setpoint (so roughly the speed, PX4's
+            # gain is ~1/s) may lead by at most twice the clearance left, so a turn or
+            # a change of goal next to a trunk can't become a slide into it. Full
+            # speed beyond ~1.4 m (a stricter cap cost ~37% of the patrol speed).
+            step = min(step, max(0.5, 2.0 * (float(ranges[k]) - 0.5 * self.radius)))
             if ranges[k] < 0.5 * self.radius:
                 self.get_logger().warn(f'Obstacle {ranges[k]:.2f} m away, backing off',
                                        throttle_duration_sec=2.0)
@@ -723,7 +735,21 @@ class PatrolLidar(PatrolRtl):
             self.avoiding = bool(off)
             if off:
                 step = min(step, 0.5 * self.speed)      # slow down while going round
+        # Turn before moving: the lidar is blind in the rear 90 deg, and obstacles
+        # there are known only from the map, where thin trunks fade out. If the way
+        # to go is far from where the nose (and lidar) points, e.g. the goal just
+        # flipped behind the drone when the return began, hold position and turn to
+        # face it first. Both trunk contacts seen happened in exactly that moment.
+        if self.face_travel and not self.facing(heading):
+            self.yaw_sp = math.atan2(math.cos(heading), math.sin(heading))   # NED yaw
+            return (self.pos.x, self.pos.y, z)
         return self.setpoint_toward(pe, pn, heading, step, z)
+
+    def facing(self, heading, limit_deg=100.0):
+        """True if ENU heading is within limit_deg of the drone's nose (lidar sees +-135)."""
+        nose_enu = math.pi / 2 - float(self.pos.heading)     # NED yaw -> ENU heading
+        diff = (heading - nose_enu + math.pi) % (2 * math.pi) - math.pi
+        return abs(diff) <= math.radians(limit_deg)
 
     def stuck(self, goal):
         """True once no progress (0.3 m closer) toward goal for stuck_timeout_s."""

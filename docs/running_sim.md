@@ -397,11 +397,16 @@ Tested without GPS: robot moved 5.4 m (report 0.16 m off) → landed on it 2.7 c
 from the pad centre; robot moved 6.3 m then went radio-silent → returned to the
 last known position and landed 3.2 cm from centre.
 
-**Open issue (found here):** in one GPS-free flight the drone brushed a trunk at
-0.34 m (contact: propeller tips reach ~0.38 m) while detouring 3 m outside the
-patrol square. Likely cause: obstacle avoidance also uses obstacles remembered on
-the map, which is drawn in the drone's drifting frame, so remembered obstacles
-can be off by the drift (~0.3 m there). Not yet fixed.
+**Trunk contacts at the start of the return (found here, fixed).** Two GPS-free
+flights brushed a trunk (0.34 and 0.37 m; propeller tips reach ~0.38 m), both in
+the second after PATROL -> RETURN, when the goal jumped behind the drone. The
+lidar is blind in the rear 90°, and there it relies on the map, where thin trunks
+fade out; so the drone could start moving into a trunk it couldn't see. (Drift was
+ruled out: 3% drift gave no closer passes than GPS.) Fixes in `plan_to`: **turn
+before moving** when the way to go is > 100° from the nose; drop the side
+committed to when the goal jumps; and slow down within ~1.4 m of an obstacle.
+Two flights after the fix: closest 0.64 and 0.58 m, full patrol speed (~1.0 m/s).
+A first, stricter speed cap cost 37% of the patrol speed and was loosened.
 
 ## 5. Checks
 
