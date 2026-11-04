@@ -7,6 +7,7 @@
   30 cylinder trunks in a 15 x 15 m square centred on the spawn point,
   >= 2 m apart (surface to surface), 2 m clear around spawn,
   corners of a 10 m patrol square kept clear. Trunks are 6-10 m tall.
+  Landing pad: PX4's arucotag model (ArUco 4x4 ID 0, 0.5 m) at the spawn point.
 
   Link into PX4 once:
     ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/worlds/forest_pillars.sdf \
@@ -106,6 +107,11 @@
     </spherical_coordinates>
 
     <!-- ================= FOREST TRUNKS (30) ================= -->
+    <include>
+      <uri>model://arucotag</uri>
+      <name>landing_pad</name>
+      <pose>0 0 0.001 0 0 0</pose>
+    </include>
     <model name="trunk_01">
       <static>true</static>
       <pose>4.95 -0.99 4.52 0 0 0</pose>

@@ -16,6 +16,8 @@ setup(
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
         ('share/' + package_name + '/worlds', glob('worlds/*.sdf')),
         ('share/' + package_name + '/rviz', glob('rviz/*.rviz')),
+        # Drone models (PX4 loads them from its own folder: symlink them there, see docs).
+        ('share/' + package_name + '/models/x500_lidar_cam_down', glob('models/x500_lidar_cam_down/*')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -29,6 +31,7 @@ setup(
             'patrol_rtl = las_offboard.patrol_rtl:main',
             'patrol_lidar = las_offboard.patrol_lidar:main',
             'lidar_test = las_offboard.lidar_test:main',
+            'pad_detector = las_offboard.pad_detector:main',
         ],
     },
 )

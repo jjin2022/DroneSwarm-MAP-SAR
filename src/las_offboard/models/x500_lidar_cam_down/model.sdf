@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  x500_lidar_cam_down: PX4's x500 with the 2D lidar of x500_lidar_2d (same mount)
+  plus a downward camera for precision landing on an ArUco marker.
+
+  Camera: 640x480, 80 deg horizontal FOV, 15 Hz, 2 cm under the body, looking
+  straight down. Image top = drone forward, image right = drone right.
+  Gazebo topics (PX4 names the spawned drone x500_lidar_cam_down_<instance>):
+    /world/<world>/model/x500_lidar_cam_down_0/link/camera_link/sensor/down_cam/image
+    /world/<world>/model/x500_lidar_cam_down_0/link/camera_link/sensor/down_cam/camera_info
+
+  PX4 has no airframe for this model: start PX4 with the x500_lidar_2d airframe
+  (4013) and PX4_SIM_MODEL=gz_x500_lidar_cam_down. See docs/running_sim.md.
+-->
+<sdf version='1.9'>
+  <model name='x500_lidar_cam_down'>
+    <self_collide>false</self_collide>
+    <include merge='true'>
+      <uri>x500</uri>
+    </include>
+
+    <!-- 2D lidar, exactly as in PX4's x500_lidar_2d -->
+    <include merge='true'>
+      <uri>model://lidar_2d_v2</uri>
+      <pose>.12 0 .26 0 0 0</pose>
+    </include>
+    <joint name="LidarJoint" type="fixed">
+      <parent>base_link</parent>
+      <child>link</child>
+      <pose relative_to="base_link">-.1 0 .26 0 0 0</pose>
+    </joint>
+
+    <!-- Downward camera. Pitch +90 deg turns the camera's x axis (its view
+         direction in Gazebo) from forward to straight down. -->
+    <link name="camera_link">
+      <pose relative_to="base_link">0 0 -0.03 0 1.5707963 0</pose>
+      <inertial>
+        <mass>0.02</mass>
+        <inertia>
+          <ixx>0.00001</ixx><ixy>0</ixy><ixz>0</ixz>
+          <iyy>0.00001</iyy><iyz>0</iyz><izz>0.00001</izz>
+        </inertia>
+      </inertial>
+      <visual name="housing">
+        <geometry><box><size>0.02 0.03 0.03</size></box></geometry>
+        <material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material>
+      </visual>
+      <sensor name="down_cam" type="camera">
+        <gz_frame_id>camera_link</gz_frame_id>
+        <camera>
+          <horizontal_fov>1.396</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>100</far>
+          </clip>
+        </camera>
+        <always_on>1</always_on>
+        <update_rate>15</update_rate>
+        <visualize>false</visualize>
+      </sensor>
+    </link>
+    <joint name="CameraJoint" type="fixed">
+      <parent>base_link</parent>
+      <child>camera_link</child>
+    </joint>
+  </model>
+</sdf>

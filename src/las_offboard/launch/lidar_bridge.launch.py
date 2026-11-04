@@ -13,6 +13,9 @@ WHAT YOU GET IN ROS 2
 ---------------------
     /scan   sensor_msgs/msg/LaserScan   the lidar, ~30 Hz, header.frame_id = "link"
     /clock  rosgraph_msgs/msg/Clock     simulation time (for use_sim_time:=true nodes)
+  with camera:=true (drone model x500_lidar_cam_down only):
+    /camera/image_raw    sensor_msgs/msg/Image       downward camera, 640x480, 15 Hz
+    /camera/camera_info  sensor_msgs/msg/CameraInfo  its intrinsics
 
 HOW TO RUN
 ----------
@@ -20,6 +23,9 @@ HOW TO RUN
     ros2 launch las_offboard lidar_bridge.launch.py
     # if you started a different world, pass its name (the <world name="..."> in the .sdf):
     ros2 launch las_offboard lidar_bridge.launch.py world:=lidar_test
+    # the x500 with the downward camera, for precision landing:
+    ros2 launch las_offboard lidar_bridge.launch.py world:=forest_pillars \
+        model:=x500_lidar_cam_down_0 camera:=true
 
     # check it:
     ros2 topic hz /scan
@@ -38,6 +44,7 @@ def make_bridge(context):
     # Read the arguments as plain strings.
     world = LaunchConfiguration('world').perform(context)
     model = LaunchConfiguration('model').perform(context)
+    camera = LaunchConfiguration('camera').perform(context).lower() == 'true'
 
     # The full Gazebo topic of the lidar. PX4 names the spawned drone
     # "<model>_<instance>", e.g. x500_lidar_2d_0 for `make px4_sitl`.
@@ -56,6 +63,16 @@ def make_bridge(context):
         # Sim clock: lets ROS nodes use simulation time instead of wall time.
         '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
     ]
+    remappings = [(gz_scan_topic, '/scan')]
+    if camera:
+        # Downward camera of the x500_lidar_cam_down model (sensor "down_cam").
+        gz_cam = f'/world/{world}/model/{model}/link/camera_link/sensor/down_cam'
+        bridge_args += [
+            f'{gz_cam}/image@sensor_msgs/msg/Image[gz.msgs.Image',
+            f'{gz_cam}/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
+        ]
+        remappings += [(f'{gz_cam}/image', '/camera/image_raw'),
+                       (f'{gz_cam}/camera_info', '/camera/camera_info')]
 
     return [Node(
         package='ros_gz_bridge',          # installed by: sudo apt install ros-jazzy-ros-gz-bridge
@@ -64,7 +81,7 @@ def make_bridge(context):
         arguments=bridge_args,
         # The Gazebo topic name is long and changes with the world/model, so we
         # rename (remap) it to a short, stable ROS name: /scan.
-        remappings=[(gz_scan_topic, '/scan')],
+        remappings=remappings,
         output='screen',                  # show its log in this terminal
     )]
 
@@ -79,6 +96,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'model', default_value='x500_lidar_2d_0',
             description='Spawned model name: x500_lidar_2d_<PX4 instance number>'),
+        DeclareLaunchArgument(
+            'camera', default_value='false',
+            description='Also bridge the downward camera (x500_lidar_cam_down only)'),
         # OpaqueFunction lets us run Python (make_bridge) with the argument values.
         OpaqueFunction(function=make_bridge),
     ])
