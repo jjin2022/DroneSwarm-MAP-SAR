@@ -230,3 +230,10 @@ Set with `--ros-args -p name:=value`.
 | `ModuleNotFoundError: px4_msgs` | Source `~/dev/px4_ws/install/setup.bash`. |
 | `More than one publisher on ...` from `patrol_lidar` | Something else publishes on the drone's topics, usually a `ros2 bag play`. Stop it; see the warning in section 4. |
 | Phantom obstacles, drone dodging nothing or wobbling (`patrol_rtl` / `takeoff_land`) | Same cause: a bag replay mixing in old data. These nodes don't check for it. Stop the replay and land. |
+
+## Testing changes to the object tracer
+
+After changing the tracer or object labels in `patrol_lidar.py`, run
+`tools/tracer_eval/evaluate.py`: it replays recorded flights through the tracer and
+checks the results against each world's real objects, without the simulator. See
+[tools/tracer_eval/README.md](../tools/tracer_eval/README.md).

@@ -169,6 +169,8 @@ the reference world for avoidance and mapping tests.
 │   └── *.pdf                       # Requirements and scope; SAR statistics
 ├── scripts/
 │   └── demo_patrol_lidar.sh        # Start/stop the whole sim + patrol_lidar; saves nothing
+├── tools/
+│   └── tracer_eval/                # Score the object tracer on recorded flights (no sim needed)
 └── src/
     └── las_offboard/               # ROS 2 Python package (ament_python)
         ├── las_offboard/           # Nodes: takeoff_land, patrol_rtl, patrol_lidar, lidar_test
