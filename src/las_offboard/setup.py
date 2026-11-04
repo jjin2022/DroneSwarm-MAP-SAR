@@ -37,6 +37,7 @@ setup(
             'robot_sim = las_offboard.robot_sim:main',
             'uwb_sim = las_offboard.uwb_sim:main',
             'uwb_locator = las_offboard.uwb_locator:main',
+            'fault_inject = las_offboard.fault_inject:main',
         ],
     },
 )

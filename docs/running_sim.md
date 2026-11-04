@@ -440,6 +440,44 @@ wrong (`robot_sim -p odometry_bias_m:=3.0`): UWB found it (heading right to the
 degree), landed 2.4 cm from the pad centre. Radio silent, then the robot moved
 (only UWB knows where): landed 1.5 cm from centre.
 
+### GPS when it's available
+
+GPS is a fallback: the drone always flies on visual odometry and also uses GPS
+when it has it, which keeps the drift from building up. Start PX4 with the third
+argument `gps`:
+```bash
+scripts/px4_nogps.sh forest_pillars_robot 0,0,0.67 gps
+```
+Height comes from the barometer in both modes, so losing GPS doesn't move it.
+
+**Cutting GPS mid-flight** (a test fault):
+```bash
+ros2 run las_offboard fault_inject --ros-args -p fault:=gps_off -p after_s:=45.0
+```
+It sets `SIM_GPS_USED=0` over MAVLink, so the simulated GPS loses its fix (in the
+script's own parameter folder, not your normal one). PX4's own failure injection
+(`MAV_CMD_INJECT_FAILURE`) does not work for GPS with this Gazebo: only PX4's
+older simulator bridge implements it, and the command is silently ignored. To check
+a fault really happened, read PX4's log (`rootfs_nogps/log/...ulg`, e.g. with
+`pyulog`): `sensor_gps.fix_type` and `estimator_status_flags.cs_gnss_pos`.
+
+**Position reset when GPS goes.** While fusing GPS, PX4 corrects the odometry's
+drift; when GPS is lost it drops that correction and **resets** its position
+estimate to the odometry's own frame, a jump of up to the drift (0.64-0.69 m in
+tests). `patrol_lidar` and `uwb_locator` watch PX4's reset counter and shift
+everything they stored by the jump (home, routes, pad, UWB track, and the obstacle
+map, which covers the lidar's blind rear sector).
+
+Tests (3% drift, same seed, robot standing still):
+
+| Flight | PX4 error at 44 s / 90 s | Result |
+|---|---|---|
+| GPS on throughout | 0.54 / 0.62 m (drift 1.2 / 1.8 m) | landed 2.1 cm from pad centre |
+| GPS cut at 45 s | 0.67 m, then reset to the drift (1.7 m) | kept flying; with reset handling: landed 1.4 cm, closest pass 0.60 m |
+
+GPS roughly halves the error while it's there rather than pinning it down: the
+odometry is fed to PX4 as very precise (1 cm), so PX4 trusts it more than GPS.
+
 ## 5. Checks
 
 ```bash

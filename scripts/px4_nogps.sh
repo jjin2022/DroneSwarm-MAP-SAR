@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Start PX4 SITL WITHOUT GPS, flying on simulated visual odometry (sim_vio).
 #
-#   scripts/px4_nogps.sh [world] [spawn pose]   (default world: forest_pillars)
+#   scripts/px4_nogps.sh [world] [spawn pose] [gps]   (default world: forest_pillars)
 #
-#   spawn pose: "x,y,z" (m) where the drone starts; e.g. "0,0,0.46" on top of the
+#   spawn pose: "x,y,z" (m) where the drone starts; e.g. "0,0,0.67" on top of the
 #   robot in forest_pillars_robot. Default: the world origin, on the ground.
+#   gps: also use GPS while it's available (GPS + visual odometry). PX4 then keeps
+#   flying on visual odometry alone if GPS is lost; cut it mid-flight with
+#   `ros2 run las_offboard fault_inject` (sets SIM_GPS_USED in this run's own
+#   parameter folder, never in your normal parameters).
 #
 # Run it in the PX4 terminal, after Gazebo is up (see docs/running_sim.md,
 # "Flying without GPS"). It:
@@ -24,6 +28,12 @@ set -eu
 
 WORLD=${1:-forest_pillars}
 POSE=${2:-${PX4_GZ_MODEL_POSE:-}}
+MODE=${3:-nogps}
+case $MODE in
+    nogps) GPS_CTRL=0 ;;          # no GPS: visual odometry only
+    gps)   GPS_CTRL=7 ;;          # GPS (position, height, velocity) + visual odometry
+    *) echo "third argument must be 'gps' or nothing"; exit 1 ;;
+esac
 PX4_DIR=${PX4_DIR:-$HOME/dev/PX4-Autopilot}
 BUILD=$PX4_DIR/build/px4_sitl_default
 RUN_DIR=$BUILD/rootfs_nogps
@@ -43,10 +53,13 @@ PYTHONPATH=$(strip "${PYTHONPATH:-}"); export PATH LD_LIBRARY_PATH PYTHONPATH
 unset GZ_CONFIG_PATH
 
 cd "$RUN_DIR"
-echo "PX4 without GPS in $RUN_DIR (world $WORLD${POSE:+, spawn at $POSE}); your normal parameters are only read."
+SOURCES="visual odometry"; [ "$GPS_CTRL" = 7 ] && SOURCES="visual odometry + GPS"
+echo "PX4 on $SOURCES in $RUN_DIR (world $WORLD${POSE:+, spawn at $POSE}); your normal parameters are only read."
 if [ -n "$POSE" ]; then export PX4_GZ_MODEL_POSE="$POSE"; else unset PX4_GZ_MODEL_POSE; fi
 # -w + the etc folder: without them PX4 ignores the current folder and uses rootfs/.
-exec env PX4_PARAM_EKF2_GPS_CTRL=0 PX4_PARAM_EKF2_EV_CTRL=5 PX4_PARAM_EKF2_HGT_REF=0 \
+# Height from the barometer in both modes, so losing GPS doesn't move it.
+exec env PX4_PARAM_EKF2_GPS_CTRL=$GPS_CTRL PX4_PARAM_EKF2_EV_CTRL=5 PX4_PARAM_EKF2_HGT_REF=0 \
+    PX4_PARAM_SIM_GPS_USED=10 \
     PX4_SYS_AUTOSTART=4013 PX4_SIM_MODEL=gz_x500_lidar_cam_down \
     PX4_GZ_STANDALONE=1 PX4_GZ_WORLD="$WORLD" \
     "$BUILD/bin/px4" -w "$RUN_DIR" "$BUILD/etc"

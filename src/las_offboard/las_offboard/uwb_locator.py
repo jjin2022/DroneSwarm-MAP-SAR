@@ -98,6 +98,15 @@ class UwbLocator(Node):
 
     def on_pos(self, msg):
         if msg.xy_valid and msg.z_valid:
+            if self.pos is not None and msg.xy_reset_counter != self.pos.xy_reset_counter:
+                # PX4 reset its position estimate: move the stored track (and the last
+                # solution) into the new frame, or old and new readings disagree.
+                de, dn = float(msg.delta_xy[1]), float(msg.delta_xy[0])
+                self.samples = [(t, tag + np.array([de, dn, 0.0]), r) for t, tag, r in self.samples]
+                if self.theta is not None:
+                    self.theta = self.theta + np.array([de, dn, 0.0])
+                self.get_logger().info(f'PX4 position reset ({math.hypot(de, dn):.2f} m): '
+                                       'shifted stored track')
             self.pos = msg
             if self.ground_u is None:
                 # Took off from the robot's platform: its ground is below our start.

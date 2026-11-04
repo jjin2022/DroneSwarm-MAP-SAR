@@ -149,6 +149,21 @@ class OccupancyMap:
         seen[free] = True
         seen[hit] = True
 
+    def shift(self, de, dn):
+        """Move the map contents by (de, dn) metres (after a PX4 position reset).
+        Rounded to whole cells; returns the (rows, cols) actually moved."""
+        dr, dc = int(round(dn / self.res)), int(round(de / self.res))
+        for name in ('logodds', 'seen'):
+            old = getattr(self, name)
+            new = np.zeros_like(old)
+            src_r = slice(max(0, -dr), self.n - max(0, dr))
+            src_c = slice(max(0, -dc), self.n - max(0, dc))
+            dst_r = slice(max(0, dr), self.n - max(0, -dr))
+            dst_c = slice(max(0, dc), self.n - max(0, -dc))
+            new[dst_r, dst_c] = old[src_r, src_c]
+            setattr(self, name, new)
+        return dr, dc
+
     def occupied_near(self, e, n, radius):
         """ENU centres (M, 2) of occupied cells in a square window around (e, n)."""
         c0 = max(int((e - radius - self.origin) / self.res), 0)
@@ -305,6 +320,17 @@ class ObjectTracer:
 
     def confirmed(self):
         return sorted((o for o in self.objects.values() if o.confirmed), key=lambda o: o.id)
+
+    def shift(self, dr, dc, grid):
+        """Move every object's footprint by whole map cells (after OccupancyMap.shift)."""
+        for obj in self.objects.values():
+            if not obj.cells:
+                continue
+            flat = np.fromiter(obj.cells, dtype=np.int64, count=len(obj.cells))
+            r, c = flat // grid.n + dr, flat % grid.n + dc
+            keep = (r >= 0) & (r < grid.n) & (c >= 0) & (c < grid.n)
+            if keep.any():
+                obj.set_cells(set((r[keep] * grid.n + c[keep]).tolist()), grid)
 
     def _groups(self, rows, cols):
         """Lists of indices into rows/cols, one per group of linked cells."""
@@ -492,6 +518,40 @@ class PatrolLidar(PatrolRtl):
             f'@ {self.map.res} m, listening on {scan_topic}')
 
     # ---------- subscriptions ----------
+    def on_pos(self, msg):
+        """PX4 sometimes resets its position estimate (e.g. when GPS is lost it falls
+        back to the visual odometry's frame, a jump of up to the drift). Everything
+        stored in the old frame (home, routes, pad, map) must move with it, or it is
+        all off by the jump; the map matters most, it covers the lidar's blind spot."""
+        prev = self.pos
+        super().on_pos(msg)
+        if prev is not None and msg.xy_reset_counter != prev.xy_reset_counter:
+            self.shift_frame(float(msg.delta_xy[0]), float(msg.delta_xy[1]))
+
+    def shift_frame(self, dx, dy):
+        """Apply a PX4 position reset of (dx north, dy east) to everything stored."""
+        def mv(p):
+            return None if p is None else (p[0] + dx, p[1] + dy) + tuple(p[2:])
+        if self.home is not None:
+            self.home = mv(self.home)
+        self.waypoints = [mv(w) for w in self.waypoints]
+        self.route = [mv(w) for w in self.route]
+        self.search_pts = [mv(w) for w in self.search_pts]
+        self.target, self.cmd = mv(self.target), mv(self.cmd)
+        self.plan_goal, self.prog_goal = mv(self.plan_goal), mv(self.prog_goal)
+        self.dock_point = mv(self.dock_point)
+        self.uwb_fix = mv(self.uwb_fix)
+        if self.pad is not None:
+            self.pad = self.pad + np.array([dx, dy, 0.0])
+        dr, dc = self.map.shift(dy, dx)                  # ENU: east = dy, north = dx
+        self.tracer_shift(dr, dc)
+        self.get_logger().warn(f'PX4 reset its position estimate by {math.hypot(dx, dy):.2f} m: '
+                               'shifted home, routes, pad and map with it')
+
+    def tracer_shift(self, dr, dc):
+        if dr or dc:
+            self.tracker.shift(dr, dc, self.map)
+
     def on_scan(self, msg):
         self.scan = msg
         self.scan_time = self.now_s()
