@@ -23,7 +23,7 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import rosbag2_py
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import PointStamped, PoseStamped
 from nav_msgs.msg import Odometry
 from px4_msgs.msg import VehicleLocalPosition
 from rclpy.serialization import deserialize_message
@@ -51,8 +51,8 @@ def read(bag):
     while reader.has_next():
         topic, raw, _ = reader.read_next()
         if topic == '/sim/ground_truth/robot':
-            m = deserialize_message(raw, PointStamped)
-            robot = (m.point.x, m.point.y)                      # world E, N (latest wins)
+            m = deserialize_message(raw, PoseStamped).pose.position
+            robot = (m.x, m.y)                                  # world E, N (latest wins)
         elif topic == '/sim/ground_truth/odometry':
             p = deserialize_message(raw, Odometry).pose.pose.position
             truth.append((p.x, p.y, -p.z))                      # world E, N, down

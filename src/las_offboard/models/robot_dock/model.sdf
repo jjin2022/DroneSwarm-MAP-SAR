@@ -1,18 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  robot_dock: stand-in for the quadruped "mothership" (roughly Unitree Go2 sized)
-  carrying the drone's landing pad on its back. It doesn't walk: tests place it,
-  and later teleport it, to stand still while the drone lands (landing on a moving
-  robot is a v1 non-goal).
+  robot_dock: stand-in for the quadruped "mothership", Unitree B2 class (the robot
+  chosen in docs/drone-design.md), carrying the drone's landing pad on its back
+  and 4 UWB anchors. It doesn't walk: tests place it, and robot_sim teleports it,
+  to stand still while the drone lands (landing on a moving robot is a v1 non-goal).
 
-  Model origin = on the ground under the body centre, x forward.
-    body      0.70 x 0.30 x 0.20 m, top at 0.43 m, on four 0.23 m legs
-    platform  0.70 x 0.60 x 0.02 m, TOP SURFACE AT 0.45 m (collision: the drone
-              lands on it). x500 skids span 0.26 x 0.25 m, so a landing up to
-              ~0.17 m off centre still has all feet on the platform.
+  Model origin = on the ground under the body centre; x forward, y left, z up.
+    body      1.00 x 0.40 x 0.25 m, top at 0.645 m, on four 0.40 m legs
+    platform  0.90 x 0.60 x 0.02 m, TOP SURFACE AT 0.665 m (collision: the drone
+              lands on it). x500 skids span 0.26 x 0.25 m: a landing up to ~0.17 m
+              off centre still has all feet on the platform.
     pad       PX4's ArUco marker (DICT_4X4_50, ID 0), 0.5 x 0.5 m, on the platform
+    UWB       4 anchors on the front and rear faces, at two heights (coplanar
+              anchors would leave the drone's height ambiguous):
+                front-left  ( 0.52,  0.20, 0.70)   front-right ( 0.52, -0.20, 0.40)
+                rear-left   (-0.52,  0.20, 0.40)   rear-right  (-0.52, -0.20, 0.70)
+              Must match las_offboard/uwb_anchors.py. Visual only (no collision),
+              outside the platform so they can't catch a landing drone.
 
-  Spawn the drone on it with PX4_GZ_MODEL_POSE="<x>,<y>,0.46" (0.45 + 1 cm).
+  Spawn the drone on it with PX4_GZ_MODEL_POSE="<x>,<y>,0.67" (0.665 + 5 mm).
 -->
 <sdf version="1.9">
   <model name="robot_dock">
@@ -20,36 +26,36 @@
     <link name="base">
       <!-- body -->
       <collision name="body_collision">
-        <pose>0 0 0.33 0 0 0</pose>
-        <geometry><box><size>0.70 0.30 0.20</size></box></geometry>
+        <pose>0 0 0.52 0 0 0</pose>
+        <geometry><box><size>1.00 0.40 0.25</size></box></geometry>
       </collision>
       <visual name="body_visual">
-        <pose>0 0 0.33 0 0 0</pose>
-        <geometry><box><size>0.70 0.30 0.20</size></box></geometry>
+        <pose>0 0 0.52 0 0 0</pose>
+        <geometry><box><size>1.00 0.40 0.25</size></box></geometry>
         <material><ambient>0.85 0.75 0.2 1</ambient><diffuse>0.85 0.75 0.2 1</diffuse></material>
       </visual>
       <!-- legs -->
-      <collision name="leg_fl_collision"><pose>0.25 0.12 0.115 0 0 0</pose><geometry><box><size>0.05 0.05 0.23</size></box></geometry></collision>
-      <collision name="leg_fr_collision"><pose>0.25 -0.12 0.115 0 0 0</pose><geometry><box><size>0.05 0.05 0.23</size></box></geometry></collision>
-      <collision name="leg_rl_collision"><pose>-0.25 0.12 0.115 0 0 0</pose><geometry><box><size>0.05 0.05 0.23</size></box></geometry></collision>
-      <collision name="leg_rr_collision"><pose>-0.25 -0.12 0.115 0 0 0</pose><geometry><box><size>0.05 0.05 0.23</size></box></geometry></collision>
-      <visual name="leg_fl"><pose>0.25 0.12 0.115 0 0 0</pose><geometry><box><size>0.05 0.05 0.23</size></box></geometry><material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual>
-      <visual name="leg_fr"><pose>0.25 -0.12 0.115 0 0 0</pose><geometry><box><size>0.05 0.05 0.23</size></box></geometry><material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual>
-      <visual name="leg_rl"><pose>-0.25 0.12 0.115 0 0 0</pose><geometry><box><size>0.05 0.05 0.23</size></box></geometry><material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual>
-      <visual name="leg_rr"><pose>-0.25 -0.12 0.115 0 0 0</pose><geometry><box><size>0.05 0.05 0.23</size></box></geometry><material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual>
+      <collision name="leg_fl_collision"><pose>0.40 0.17 0.20 0 0 0</pose><geometry><box><size>0.08 0.08 0.40</size></box></geometry></collision>
+      <collision name="leg_fr_collision"><pose>0.40 -0.17 0.20 0 0 0</pose><geometry><box><size>0.08 0.08 0.40</size></box></geometry></collision>
+      <collision name="leg_rl_collision"><pose>-0.40 0.17 0.20 0 0 0</pose><geometry><box><size>0.08 0.08 0.40</size></box></geometry></collision>
+      <collision name="leg_rr_collision"><pose>-0.40 -0.17 0.20 0 0 0</pose><geometry><box><size>0.08 0.08 0.40</size></box></geometry></collision>
+      <visual name="leg_fl"><pose>0.40 0.17 0.20 0 0 0</pose><geometry><box><size>0.08 0.08 0.40</size></box></geometry><material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual>
+      <visual name="leg_fr"><pose>0.40 -0.17 0.20 0 0 0</pose><geometry><box><size>0.08 0.08 0.40</size></box></geometry><material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual>
+      <visual name="leg_rl"><pose>-0.40 0.17 0.20 0 0 0</pose><geometry><box><size>0.08 0.08 0.40</size></box></geometry><material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual>
+      <visual name="leg_rr"><pose>-0.40 -0.17 0.20 0 0 0</pose><geometry><box><size>0.08 0.08 0.40</size></box></geometry><material><ambient>0.2 0.2 0.2 1</ambient><diffuse>0.2 0.2 0.2 1</diffuse></material></visual>
       <!-- landing platform -->
       <collision name="platform_collision">
-        <pose>0 0 0.44 0 0 0</pose>
-        <geometry><box><size>0.70 0.60 0.02</size></box></geometry>
+        <pose>0 0 0.655 0 0 0</pose>
+        <geometry><box><size>0.90 0.60 0.02</size></box></geometry>
       </collision>
       <visual name="platform_visual">
-        <pose>0 0 0.44 0 0 0</pose>
-        <geometry><box><size>0.70 0.60 0.02</size></box></geometry>
+        <pose>0 0 0.655 0 0 0</pose>
+        <geometry><box><size>0.90 0.60 0.02</size></box></geometry>
         <material><ambient>0.5 0.5 0.5 1</ambient><diffuse>0.5 0.5 0.5 1</diffuse></material>
       </visual>
       <!-- ArUco pad (same texture as PX4's arucotag model) -->
       <visual name="pad">
-        <pose>0 0 0.4515 0 0 0</pose>
+        <pose>0 0 0.6665 0 0 0</pose>
         <geometry><plane><normal>0 0 1</normal><size>0.5 0.5</size></plane></geometry>
         <material>
           <diffuse>1 1 1 1</diffuse>
@@ -57,6 +63,11 @@
           <pbr><metal><albedo_map>model://arucotag/arucotag.png</albedo_map></metal></pbr>
         </material>
       </visual>
+      <!-- UWB anchors (visual markers; ranges are simulated by uwb_sim) -->
+      <visual name="uwb_fl"><pose>0.52 0.20 0.70 0 0 0</pose><geometry><box><size>0.04 0.04 0.06</size></box></geometry><material><ambient>0.9 0.1 0.1 1</ambient><diffuse>0.9 0.1 0.1 1</diffuse></material></visual>
+      <visual name="uwb_fr"><pose>0.52 -0.20 0.40 0 0 0</pose><geometry><box><size>0.04 0.04 0.06</size></box></geometry><material><ambient>0.9 0.1 0.1 1</ambient><diffuse>0.9 0.1 0.1 1</diffuse></material></visual>
+      <visual name="uwb_rl"><pose>-0.52 0.20 0.40 0 0 0</pose><geometry><box><size>0.04 0.04 0.06</size></box></geometry><material><ambient>0.9 0.1 0.1 1</ambient><diffuse>0.9 0.1 0.1 1</diffuse></material></visual>
+      <visual name="uwb_rr"><pose>-0.52 -0.20 0.70 0 0 0</pose><geometry><box><size>0.04 0.04 0.06</size></box></geometry><material><ambient>0.9 0.1 0.1 1</ambient><diffuse>0.9 0.1 0.1 1</diffuse></material></visual>
     </link>
   </model>
 </sdf>

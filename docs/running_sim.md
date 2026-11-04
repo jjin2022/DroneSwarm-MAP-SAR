@@ -342,9 +342,9 @@ landing accuracy comes from the camera.
 
 ### Landing on the robot
 
-`models/robot_dock` stands in for the quadruped: a Go2-sized body with a
-0.70 × 0.60 m platform on its back, top surface 0.45 m up, carrying the same
-ArUco pad. It's static: it stands still while the drone lands (landing on a moving
+`models/robot_dock` stands in for the quadruped: a Unitree B2-class body
+(the robot chosen in `docs/drone-design.md`) with a 0.90 × 0.60 m platform on
+its back, top surface 0.665 m up, carrying the same ArUco pad and 4 UWB anchors. It's static: it stands still while the drone lands (landing on a moving
 robot is a v1 non-goal). `forest_pillars_robot` has it at the spawn point and the
 drone starts on its back.
 
@@ -356,14 +356,15 @@ ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/worlds/forest_pillars_robot.sdf 
       ~/dev/PX4-Autopilot/Tools/simulation/gz/worlds/forest_pillars_robot.sdf
 ```
 Run as in "Flying without GPS", with the world `forest_pillars_robot` and the
-drone spawned on the platform: `scripts/px4_nogps.sh forest_pillars_robot 0,0,0.46`.
+drone spawned on the platform: `scripts/px4_nogps.sh forest_pillars_robot 0,0,0.67`.
 Nothing else changes: "home" is the drone's starting point on the robot, so the
 handover height (0.6 m) is measured from the platform, and PX4's touchdown
 detection works on it. Make other robot worlds with
 `gen_forest.py --robot --pad-pos E N --name ...`.
 
-Tested without GPS: landed 3.2 cm from the pad centre, resting on the platform
-at the same height it took off from.
+Tested without GPS (on the earlier Go2-sized version, platform 0.45 m): landed
+3.2 cm from the pad centre, resting on the platform at its take-off height. On the
+B2-class version: 2.4 and 1.5 cm (see the UWB tests below).
 
 ### Robot that moves while the drone is out
 
@@ -386,6 +387,7 @@ from the robot.
 
 | Source | Used when |
 |---|---|
+| UWB fix (`/uwb/dock_fix`) | `uwb_locator` published a good fix in the last `uwb_timeout_s` (3 s) |
 | Robot radio (`/robot/dock_position`) | A report arrived in the last `radio_timeout_s` (3 s) |
 | Last known position | The radio has gone quiet: the last report heard |
 | `dock_e`/`dock_n` setting, or home | No report ever |
@@ -407,6 +409,36 @@ before moving** when the way to go is > 100° from the nose; drop the side
 committed to when the goal jumps; and slow down within ~1.4 m of an obstacle.
 Two flights after the fix: closest 0.64 and 0.58 m, full patrol speed (~1.0 m/s).
 A first, stricter speed cap cost 37% of the patrol speed and was loosened.
+
+### UWB: finding the robot from its anchors
+
+The robot carries 4 UWB anchors (front and rear faces, at 0.40 and 0.70 m, as in
+`docs/drone-design.md`; layout in `las_offboard/uwb_anchors.py`). Two nodes:
+
+- `uwb_sim` (simulator side): ranges from the drone's TRUE position to the anchors,
+  10 Hz, with the design doc's noise model: ±0.10 m, 10% of readings blocked by a
+  trunk and 0.3-2.5 m too long, nothing beyond 80 m. Publishes `/uwb/ranges`.
+- `uwb_locator` (drone side): sees only the ranges and PX4's own position. The
+  anchors are ~1 m apart, so from a distance one set of ranges can't tell
+  direction; it combines the last 20 s of ranges along the drone's track and solves
+  for the robot's position and heading, dropping blocked readings (several rounds),
+  and publishes `/uwb/dock_fix` only when the fit is good and the position
+  uncertainty is under 0.3 m. When readings stop fitting (the robot moved) it starts
+  a new fix. The fix is in PX4's own frame, so the drone's drift cancels out.
+
+```bash
+ros2 run las_offboard uwb_sim
+ros2 run las_offboard uwb_locator
+```
+`patrol_lidar` puts a good UWB fix first: it measures the robot directly, so it
+catches a wrong radio report. Offline (known answers): moving drone, 10% or 30%
+blocked readings: fix every time, 1-2 cm; drone hovering 8 m away: correctly no
+fix (a forced answer would have been up to 26 m off).
+
+Tested without GPS, B2-class robot: robot moved 2.2 m with its radio report 3.07 m
+wrong (`robot_sim -p odometry_bias_m:=3.0`): UWB found it (heading right to the
+degree), landed 2.4 cm from the pad centre. Radio silent, then the robot moved
+(only UWB knows where): landed 1.5 cm from centre.
 
 ## 5. Checks
 

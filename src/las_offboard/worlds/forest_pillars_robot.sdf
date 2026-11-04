@@ -7,7 +7,7 @@
   30 cylinder trunks in a 15 x 15 m square centred on the spawn point,
   >= 2 m apart (surface to surface), 2 m clear around spawn,
   corners of a 10 m patrol square kept clear. Trunks are 6-10 m tall.
-  Landing pad: on the robot_dock model (pad 0.45 m up) at E=0 N=0; spawn the drone with PX4_GZ_MODEL_POSE="0,0,0.46".
+  Landing pad: on the robot_dock model (B2 class, pad 0.665 m up) at E=0 N=0; spawn the drone with PX4_GZ_MODEL_POSE="0,0,0.67".
 
   Link into PX4 once:
     ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/worlds/forest_pillars_robot.sdf \

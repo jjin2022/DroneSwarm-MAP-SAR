@@ -12,12 +12,16 @@ This node does the simulator version:
     random direction (legged odometry: ~3%).
   - Optional radio-drop fault: radio_silent_after_s stops the reports from that
     many seconds after arming (the drone must fall back to the last known position).
+  - Optional bad-odometry fault: odometry_bias_m adds a fixed error of that size to
+    the report once the robot has moved (the drone's UWB fix should catch it).
+  - The robot faces a random direction after moving (the UWB anchors turn with it).
 
   Out:  /robot/dock_position      geometry_msgs/PointStamped, frame "takeoff_ned":
                                   x north, y east (m) of the dock from where the drone
                                   took off. What the drone is allowed to use.
-        /sim/ground_truth/robot   geometry_msgs/PointStamped, frame "world" (ENU):
-                                  the robot's true position, for test tools only.
+        /sim/ground_truth/robot   geometry_msgs/PoseStamped, frame "world" (ENU):
+                                  the robot's true pose, for uwb_sim and test tools
+                                  only (never for the drone).
   In:   fmu/out/vehicle_status_v1 (to know when the drone armed)
 
 Assumes the drone took off from the robot (spawned on its back), so the take-off
@@ -30,7 +34,7 @@ import re
 import subprocess
 
 import rclpy
-from geometry_msgs.msg import PointStamped
+from geometry_msgs.msg import PointStamped, PoseStamped
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from px4_msgs.msg import VehicleStatus
@@ -60,6 +64,7 @@ class RobotSim(Node):
         self.clearance = p('clearance_m', 1.0).value
         self.size = p('forest_size_m', 15.0).value
         self.min_move = p('min_move_m', 2.0).value
+        self.bias = p('odometry_bias_m', 0.0).value
         seed = p('seed', 0).value
         self.rng = random.Random(seed or None)
 
@@ -73,12 +78,14 @@ class RobotSim(Node):
                          history=HistoryPolicy.KEEP_LAST, depth=1)
         self.create_subscription(VehicleStatus, 'fmu/out/vehicle_status_v1', self.on_status, qos)
         self.report_pub = self.create_publisher(PointStamped, '/robot/dock_position', 10)
-        self.truth_pub = self.create_publisher(PointStamped, '/sim/ground_truth/robot', 10)
+        self.truth_pub = self.create_publisher(PoseStamped, '/sim/ground_truth/robot', 10)
 
         self.pos = self.start          # true position, world ENU
+        self.yaw = 0.0                 # true heading, ENU rad (starts facing east)
         self.err = (0.0, 0.0)          # odometry error (E, N)
         self.armed_at = None
         self.moved = False
+        self.create_timer(0.2, self.publish_truth)    # uwb_sim needs it often
         self.create_timer(1.0, self.tick)
         self.get_logger().info(
             f'Robot at E={self.start[0]:.1f} N={self.start[1]:.1f}; relocates '
@@ -105,8 +112,9 @@ class RobotSim(Node):
                 return e, n
         raise RuntimeError('no clear spot for the robot')
 
-    def teleport(self, e, n):
-        req = f'name: "{self.model}", position: {{x: {e:.3f}, y: {n:.3f}, z: 0.0}}'
+    def teleport(self, e, n, yaw):
+        req = (f'name: "{self.model}", position: {{x: {e:.3f}, y: {n:.3f}, z: 0.0}}, '
+               f'orientation: {{z: {math.sin(yaw / 2):.6f}, w: {math.cos(yaw / 2):.6f}}}')
         out = subprocess.run(
             ['gz', 'service', '-s', f'/world/{self.world}/set_pose',
              '--reqtype', 'gz.msgs.Pose', '--reptype', 'gz.msgs.Boolean',
@@ -114,28 +122,34 @@ class RobotSim(Node):
             env=clean_gz_env(), capture_output=True, text=True, timeout=10)
         return 'data: true' in out.stdout
 
+    def publish_truth(self):
+        truth = PoseStamped()
+        truth.header.stamp, truth.header.frame_id = self.get_clock().now().to_msg(), 'world'
+        truth.pose.position.x, truth.pose.position.y = float(self.pos[0]), float(self.pos[1])
+        truth.pose.orientation.z = math.sin(self.yaw / 2)
+        truth.pose.orientation.w = math.cos(self.yaw / 2)
+        self.truth_pub.publish(truth)
+
     def tick(self):
         t = None if self.armed_at is None else self.now() - self.armed_at
         if t is not None and not self.moved and 0 <= self.relocate_after <= t:
             e, n = self.pick_spot()
-            if self.teleport(e, n):
+            yaw = self.rng.uniform(-math.pi, math.pi)
+            if self.teleport(e, n, yaw):
                 dist = math.hypot(e - self.pos[0], n - self.pos[1])
                 ang = self.rng.uniform(0.0, 2 * math.pi)
-                self.err = (self.err[0] + self.odo_err * dist * math.cos(ang),
-                            self.err[1] + self.odo_err * dist * math.sin(ang))
-                self.pos = (e, n)
+                err = self.odo_err * dist + self.bias
+                self.err = (self.err[0] + err * math.cos(ang), self.err[1] + err * math.sin(ang))
+                self.pos, self.yaw = (e, n), yaw
                 self.moved = True
                 self.get_logger().info(
-                    f'Robot moved {dist:.1f} m to E={e:.2f} N={n:.2f} '
-                    f'(odometry error now {math.hypot(*self.err):.2f} m)')
+                    f'Robot moved {dist:.1f} m to E={e:.2f} N={n:.2f}, heading '
+                    f'{math.degrees(yaw):.0f} deg (radio report now {math.hypot(*self.err):.2f} m off'
+                    f'{", bad-odometry fault" if self.bias else ""})')
             else:
                 self.get_logger().error('set_pose failed; will retry', throttle_duration_sec=5.0)
 
         stamp = self.get_clock().now().to_msg()
-        truth = PointStamped()
-        truth.header.stamp, truth.header.frame_id = stamp, 'world'
-        truth.point.x, truth.point.y = float(self.pos[0]), float(self.pos[1])
-        self.truth_pub.publish(truth)
 
         if t is not None and 0 <= self.radio_silent_after <= t:
             self.get_logger().warn('Radio silent (fault injected)', throttle_duration_sec=10.0)

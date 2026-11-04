@@ -423,11 +423,14 @@ class PatrolLidar(PatrolRtl):
         # fly back to before looking for the pad. (0, 0) = home. On a real robot
         # this would come from the robot's reported position.
         self.dock_en = (p('dock_e', 0.0).value, p('dock_n', 0.0).value)
-        # The robot radios where the dock is now (relative to the take-off point,
-        # from its own odometry). Priority: fresh radio report > last known report
-        # > the dock_e/dock_n setting. (GPS slots in after radio: Phase 1 step 6.)
+        # Where is the dock now? Priority: a good UWB fix (uwb_locator, measures the
+        # robot directly) > the robot's radio report (its own odometry, relative to
+        # the take-off point) > last known report > the dock_e/dock_n setting.
+        # (GPS slots in after radio: Phase 1 step 6.)
         dock_topic = p('dock_topic', '/robot/dock_position').value
+        uwb_topic = p('uwb_topic', '/uwb/dock_fix').value
         self.radio_timeout = p('radio_timeout_s', 3.0).value
+        self.uwb_timeout = p('uwb_timeout_s', 3.0).value
 
         px4_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -440,6 +443,7 @@ class PatrolLidar(PatrolRtl):
         self.create_subscription(VehicleAttitude, att_topic, self.on_att, px4_qos)
         self.pad_sub = self.create_subscription(PointStamped, pad_topic, self.on_pad, 10)
         self.create_subscription(PointStamped, dock_topic, self.on_dock_report, 10)
+        self.create_subscription(PointStamped, uwb_topic, self.on_uwb_fix, 10)
         self.map_pub = self.create_publisher(OccupancyGrid, 'map', map_qos)
         self.obj_pub = self.create_publisher(MarkerArray, 'objects', 10)
 
@@ -463,6 +467,8 @@ class PatrolLidar(PatrolRtl):
         self.pad_time = None                # when it was last seen (s, node clock)
         self.dock_report = None             # latest radio report (north, east) from take-off
         self.dock_report_time = None
+        self.uwb_fix = None                 # latest UWB fix (x, y) in PX4's local frame
+        self.uwb_fix_time = None
         self.dock_source = None             # which source the return is using
         self.land_z = None                  # PRECISION_LAND: current altitude setpoint
         self.dock_point = None              # where precision landing started (NED x, y)
@@ -928,8 +934,15 @@ class PatrolLidar(PatrolRtl):
         self.dock_report = (msg.point.x, msg.point.y)     # north, east from take-off
         self.dock_report_time = self.now_s()
 
+    def on_uwb_fix(self, msg):
+        self.uwb_fix = (msg.point.x, msg.point.y)
+        self.uwb_fix_time = self.now_s()
+
     def dock_offset(self):
         """(north, east, source) of the dock from the take-off point, best source first."""
+        if self.uwb_fix is not None and self.now_s() - self.uwb_fix_time < self.uwb_timeout:
+            # Already in PX4's own frame (drift cancels); express it from home.
+            return self.uwb_fix[0] - self.home[0], self.uwb_fix[1] - self.home[1], 'UWB'
         if self.dock_report is not None:
             age = self.now_s() - self.dock_report_time
             if age < self.radio_timeout:

@@ -35,6 +35,8 @@ setup(
             'pad_detector = las_offboard.pad_detector:main',
             'sim_vio = las_offboard.sim_vio:main',
             'robot_sim = las_offboard.robot_sim:main',
+            'uwb_sim = las_offboard.uwb_sim:main',
+            'uwb_locator = las_offboard.uwb_locator:main',
         ],
     },
 )
