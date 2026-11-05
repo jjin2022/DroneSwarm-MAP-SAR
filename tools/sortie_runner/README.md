@@ -54,5 +54,9 @@ Any failure resets the count.
   after the sortie; the runner checks nothing is left before the next one.
 - Topic checks use `ros2 topic list --no-daemon`: the ROS 2 daemon's cache can go
   stale after programs are killed hard and then never show the next sortie's topics.
+- It keeps the computer awake (`systemd-inhibit`: no sleep, idle or lid-close suspend)
+  while it runs: a laptop that suspended mid-sortie froze the simulator and failed it.
+- PX4 needs `patches/px4-sitl-hrt-double-enqueue.patch`: without it about 1.5% of
+  flights lose PX4's simulated battery messages at arming and turn back at once.
 - It refuses to start while another simulator is running, and stops if your normal
   PX4 parameters ever change.

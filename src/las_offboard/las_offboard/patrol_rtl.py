@@ -13,6 +13,7 @@ Coordinate note: PX4 local frame is NED (North-East-Down), so z is NEGATIVE when
 the drone is above home. "Climb to altitude_m" means target z = home_z - altitude_m.
 """
 import math
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -110,8 +111,11 @@ class PatrolRtl(Node):
 
     # ---------- subscriptions ----------
     def now_s(self):
-        """ROS clock time in seconds (sim time if use_sim_time is set)."""
-        return self.get_clock().now().nanoseconds * 1e-9
+        """Monotonic seconds, for measuring how old received data is.
+
+        Not the wall clock: a clock step (NTP correcting the time, e.g. after a laptop
+        sleep) made every message look 2 s old and landed the drone in place."""
+        return time.monotonic()
 
     def on_status(self, msg):
         self.status = msg

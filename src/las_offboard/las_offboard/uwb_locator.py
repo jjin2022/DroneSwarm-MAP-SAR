@@ -23,6 +23,7 @@ Assumes the robot stands on the same ground level as where the drone took off
 (from the robot's platform), which holds on flat ground.
 """
 import math
+import time
 
 import numpy as np
 import rclpy
@@ -94,7 +95,7 @@ class UwbLocator(Node):
                                f'position std < {self.max_std:.2f} m')
 
     def now(self):
-        return self.get_clock().now().nanoseconds * 1e-9
+        return time.monotonic()          # sample ages; immune to wall-clock steps
 
     def on_pos(self, msg):
         if msg.xy_valid and msg.z_valid:

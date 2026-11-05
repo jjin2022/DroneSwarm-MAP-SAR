@@ -1040,9 +1040,6 @@ class PatrolLidar(PatrolRtl):
         return f'the dock (E={de:.1f}, N={dn:.1f}, from {source})'
 
     # ---------- precision landing ----------
-    def now_s(self):
-        return self.get_clock().now().nanoseconds * 1e-9
-
     def pad_age(self):
         """Seconds since the pad was last seen (inf if never)."""
         return math.inf if self.pad_time is None else self.now_s() - self.pad_time

@@ -41,6 +41,7 @@ import math
 import os
 import random
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -336,6 +337,15 @@ def main():
                                                   time.strftime('sorties_%Y%m%d_%H%M%S')))
     a = ap.parse_args()
     a.out = os.path.abspath(a.out)       # programs run inside each sortie folder
+
+    # Keep the computer awake: a laptop suspending mid-sortie freezes the simulator
+    # and fails the sortie (seen: suspend at 00:15, resumed 14 h later -> timeout).
+    if not os.environ.get('SORTIE_RUNNER_AWAKE') and shutil.which('systemd-inhibit'):
+        os.environ['SORTIE_RUNNER_AWAKE'] = '1'
+        os.execvp('systemd-inhibit', ['systemd-inhibit', '--what=sleep:idle:handle-lid-switch',
+                                      '--who=sortie runner', '--why=simulated sorties running',
+                                      sys.executable, os.path.abspath(__file__), *sys.argv[1:],
+                                      f'--out={a.out}'])   # last --out wins
 
     if running_leftovers():
         sys.exit('A simulator or las_offboard node is already running; stop it first:\n  '

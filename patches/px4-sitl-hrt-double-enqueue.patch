@@ -1,0 +1,28 @@
+diff --git a/platforms/posix/src/px4/common/drv_hrt.cpp b/platforms/posix/src/px4/common/drv_hrt.cpp
+index b510229bc0..35ce3b090e 100644
+--- a/platforms/posix/src/px4/common/drv_hrt.cpp
++++ b/platforms/posix/src/px4/common/drv_hrt.cpp
+@@ -346,9 +346,9 @@ hrt_call_internal(struct hrt_call *entry, hrt_abstime deadline, hrt_abstime inte
+ 	   queue for the uninitialised entry->link but we don't do
+ 	   anything actually unsafe.
+ 	*/
+-	if (entry->deadline != 0) {
+-		sq_rem(&entry->link, &callout_queue);
+-	}
++	// Always remove (a no-op when not queued) rather than trusting deadline != 0:
++	// in SITL, callouts run unlocked and other threads can re-arm entries meanwhile.
++	sq_rem(&entry->link, &callout_queue);
+ 
+ #if 1
+ 
+@@ -459,6 +459,10 @@ hrt_call_invoke()
+ 				//PX4_INFO("call deadline set to %lu now=%lu", call->deadline,  now);
+ 			}
+ 
++			// Another thread may have re-armed this entry (hrt_call_internal) while
++			// the callout ran unlocked; entering it twice corrupts the queue and
++			// silently drops every entry behind it. Remove it first if queued.
++			sq_rem(&call->link, &callout_queue);
+ 			hrt_call_enter(call);
+ 		}
+ 	}
