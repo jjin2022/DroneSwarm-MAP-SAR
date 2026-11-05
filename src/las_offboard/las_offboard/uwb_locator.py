@@ -155,7 +155,10 @@ class UwbLocator(Node):
         return th, rms, std, inlier.sum() / max(valid.sum(), 1)
 
     def solve(self):
-        if len(self.samples) < 20:
+        # No ranges for a while (UWB lost or out of range): publish nothing. Solving on
+        # from the old window would keep reporting where the robot WAS, which is
+        # wrong if it has moved since, and would outrank a good radio report.
+        if len(self.samples) < 20 or self.now() - self.samples[-1][0] > 2.0:
             return
         pts = np.array([s[1] for s in self.samples])
         meas = np.array([s[2] for s in self.samples])

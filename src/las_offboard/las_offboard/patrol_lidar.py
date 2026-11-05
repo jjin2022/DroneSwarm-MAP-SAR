@@ -780,7 +780,7 @@ class PatrolLidar(PatrolRtl):
                 self.get_logger().warn(f'Obstacle {ranges[k]:.2f} m away, backing off',
                                        throttle_duration_sec=2.0)
                 away = math.atan2(-rel[k, 1], -rel[k, 0])
-                return self.setpoint_toward(pe, pn, away, 0.5, z, face=False)
+                return self.escape(pe, pn, away, z)
             heading, off = self.free_heading(heading, rel, min(self.lookahead, dist))
             if heading is None:
                 # No clear heading: back away from everything nearby (closest
@@ -791,8 +791,7 @@ class PatrolLidar(PatrolRtl):
                                        throttle_duration_sec=2.0)
                 if np.hypot(*push) < 1e-6:
                     return (self.pos.x, self.pos.y, z)
-                return self.setpoint_toward(pe, pn, math.atan2(push[1], push[0]), 0.5, z,
-                                            face=False)
+                return self.escape(pe, pn, math.atan2(push[1], push[0]), z)
             if off and not self.avoiding:
                 self.get_logger().info(
                     f'Obstacle ahead: steering {abs(off):.0f} deg {"left" if off > 0 else "right"}')
@@ -810,6 +809,17 @@ class PatrolLidar(PatrolRtl):
             self.yaw_sp = math.atan2(math.cos(heading), math.sin(heading))   # NED yaw
             return (self.pos.x, self.pos.y, z)
         return self.setpoint_toward(pe, pn, heading, step, z)
+
+    def escape(self, pe, pn, heading, z):
+        """Back away 0.5 m along heading, but turn to face it first if it's outside
+        what the lidar sees. Escapes used to move without turning, i.e. often straight
+        backwards into the blind rear sector, and one backed into a thin trunk (0.28 m,
+        sortie 7 of the first Phase 1 run). Hovering while turning is safe; moving
+        blind is not."""
+        if self.face_travel and not self.facing(heading):
+            self.yaw_sp = math.atan2(math.cos(heading), math.sin(heading))   # NED yaw
+            return (self.pos.x, self.pos.y, z)
+        return self.setpoint_toward(pe, pn, heading, 0.5, z)
 
     def facing(self, heading, limit_deg=100.0):
         """True if ENU heading is within limit_deg of the drone's nose (lidar sees +-135)."""

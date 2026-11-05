@@ -9,6 +9,8 @@
 #   flying on visual odometry alone if GPS is lost; cut it mid-flight with
 #   `ros2 run las_offboard fault_inject` (sets SIM_GPS_USED in this run's own
 #   parameter folder, never in your normal parameters).
+#   PX4_DAEMON=1 (environment): run without the pxh> console, e.g. from a script
+#   with no terminal (tools/sortie_runner).
 #
 # Run it in the PX4 terminal, after Gazebo is up (see docs/running_sim.md,
 # "Flying without GPS"). It:
@@ -62,4 +64,4 @@ exec env PX4_PARAM_EKF2_GPS_CTRL=$GPS_CTRL PX4_PARAM_EKF2_EV_CTRL=5 PX4_PARAM_EK
     PX4_PARAM_SIM_GPS_USED=10 \
     PX4_SYS_AUTOSTART=4013 PX4_SIM_MODEL=gz_x500_lidar_cam_down \
     PX4_GZ_STANDALONE=1 PX4_GZ_WORLD="$WORLD" \
-    "$BUILD/bin/px4" -w "$RUN_DIR" "$BUILD/etc"
+    "$BUILD/bin/px4" ${PX4_DAEMON:+-d} -w "$RUN_DIR" "$BUILD/etc"

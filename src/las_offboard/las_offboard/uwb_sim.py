@@ -14,6 +14,10 @@ Noise model (as in tools/swarm_uwb_sim.py / docs/drone-design.md):
   - non-line-of-sight: with probability nlos_prob a reading is 0.3-2.5 m too long
     (signal bounced round a trunk); UWB errors are almost always positive
   - nothing beyond max_range_m
+
+Fault (for tests): lost_after_s >= 0 stops all UWB ranging that many seconds after
+the drone arms (a dead UWB radio); the drone must fall back to the robot's radio
+report, last known position and camera search.
 """
 import math
 
@@ -22,7 +26,9 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from std_msgs.msg import Float32MultiArray
+from px4_msgs.msg import VehicleStatus
 
 from las_offboard.uwb_anchors import anchors_world
 
@@ -37,6 +43,11 @@ class UwbSim(Node):
         self.nlos = p('nlos_prob', 0.10).value
         self.max_range = p('max_range_m', 80.0).value
         self.rng = np.random.default_rng(p('seed', 0).value or None)
+        self.lost_after = p('lost_after_s', -1.0).value
+        self.armed_at = None
+        self.create_subscription(VehicleStatus, 'fmu/out/vehicle_status_v1', self.on_status,
+                                 QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
+                                            history=HistoryPolicy.KEEP_LAST, depth=1))
         self.drone = None
         self.robot = None
         self.create_subscription(Odometry, '/sim/ground_truth/odometry',
@@ -46,11 +57,21 @@ class UwbSim(Node):
         self.pub = self.create_publisher(Float32MultiArray, '/uwb/ranges', 10)
         self.create_timer(0.1, self.tick)
         self.get_logger().info(f'UWB: noise {self.noise:.2f} m, NLOS {self.nlos:.0%}, '
-                               f'range {self.max_range:.0f} m, 10 Hz')
+                               f'range {self.max_range:.0f} m, 10 Hz'
+                               + (f', LOST {self.lost_after:.0f} s after arming (fault)'
+                                  if self.lost_after >= 0 else ''))
+
+    def on_status(self, msg):
+        if self.armed_at is None and msg.arming_state == VehicleStatus.ARMING_STATE_ARMED:
+            self.armed_at = self.get_clock().now().nanoseconds * 1e-9
 
     def tick(self):
         if self.drone is None or self.robot is None:
             return
+        if self.lost_after >= 0 and self.armed_at is not None:
+            if self.get_clock().now().nanoseconds * 1e-9 - self.armed_at >= self.lost_after:
+                self.get_logger().warn('UWB lost (fault injected)', throttle_duration_sec=30.0)
+                return
         d = self.drone.pose.pose.position
         tag = np.array([d.x, d.y, d.z + TAG_HEIGHT_M])
         r = self.robot.pose
