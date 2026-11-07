@@ -50,11 +50,11 @@ class UwbSim(Node):
                                             history=HistoryPolicy.KEEP_LAST, depth=1))
         self.drone = None
         self.robot = None
-        self.create_subscription(Odometry, '/sim/ground_truth/odometry',
+        self.create_subscription(Odometry, 'sim/ground_truth/odometry',
                                  lambda m: setattr(self, 'drone', m), 10)
         self.create_subscription(PoseStamped, '/sim/ground_truth/robot',
                                  lambda m: setattr(self, 'robot', m), 10)
-        self.pub = self.create_publisher(Float32MultiArray, '/uwb/ranges', 10)
+        self.pub = self.create_publisher(Float32MultiArray, 'uwb/ranges', 10)
         self.create_timer(0.1, self.tick)
         self.get_logger().info(f'UWB: noise {self.noise:.2f} m, NLOS {self.nlos:.0%}, '
                                f'range {self.max_range:.0f} m, 10 Hz'

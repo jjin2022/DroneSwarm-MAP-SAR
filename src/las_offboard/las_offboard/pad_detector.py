@@ -84,15 +84,15 @@ class PadDetector(Node):
 
         px4_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                              history=HistoryPolicy.KEEP_LAST, depth=1)
-        self.create_subscription(CameraInfo, '/camera/camera_info', self.on_info, 10)
-        self.create_subscription(Image, '/camera/image_raw', self.on_image,
+        self.create_subscription(CameraInfo, 'camera/camera_info', self.on_info, 10)
+        self.create_subscription(Image, 'camera/image_raw', self.on_image,
                                  qos_profile_sensor_data)
         self.create_subscription(VehicleAttitude, 'fmu/out/vehicle_attitude',
                                  lambda m: setattr(self, 'att', m), px4_qos)
         self.create_subscription(VehicleLocalPosition, 'fmu/out/vehicle_local_position_v1',
                                  lambda m: setattr(self, 'pos', m), px4_qos)
-        self.pad_pub = self.create_publisher(PointStamped, '/landing_pad', 10)
-        self.debug_pub = self.create_publisher(Image, '/camera/pad_debug', 1)
+        self.pad_pub = self.create_publisher(PointStamped, 'landing_pad', 10)
+        self.debug_pub = self.create_publisher(Image, 'camera/pad_debug', 1)
         self.create_timer(5.0, self.report)
         self.get_logger().info(f'Looking for ArUco {dict_name} ID {self.marker_id}, '
                                f'{self.size} m, on /camera/image_raw')

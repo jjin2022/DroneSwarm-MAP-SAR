@@ -47,6 +47,11 @@ class PatrolRtl(Node):
         p = self.declare_parameter
         self.alt = p('altitude_m', 5.0).value              # patrol height above home
         self.size = p('patrol_size_m', 10.0).value         # side length of the square
+        # A rectangle instead (multi-drone: one strip each): north-south side
+        # (< 0: same as patrol_size_m, which is then the east-west side) and its
+        # centre's offset from home (ENU, m).
+        self.size_n = p('patrol_size_n_m', -1.0).value
+        self.center_en = (p('patrol_center_e_m', 0.0).value, p('patrol_center_n_m', 0.0).value)
         self.return_batt = p('return_battery', 0.35).value   # 0..1
         self.tol = p('reach_tolerance_m', 0.5).value       # "arrived" radius, h and v
         # MAVLink system ID of the vehicle; 0 = take it from VehicleStatus.
@@ -286,11 +291,14 @@ class PatrolRtl(Node):
             self.home = (hx, hy, hz, yaw)
             # First target: straight up above home (z decreases going up in NED).
             self.target = (hx, hy, hz - self.alt)
-            # Square of side patrol_size_m centred on home, flown at patrol altitude.
-            h = self.size / 2.0
+            # Square of side patrol_size_m centred on home, flown at patrol altitude
+            # (or the rectangle set by patrol_size_n_m / patrol_center_*_m).
+            he = self.size / 2.0
+            hn = (self.size_n if self.size_n > 0 else self.size) / 2.0
+            cx, cy = hx + self.center_en[1], hy + self.center_en[0]      # NED
             fz = hz - self.alt
-            self.waypoints = [(hx + h, hy + h, fz), (hx + h, hy - h, fz),
-                              (hx - h, hy - h, fz), (hx - h, hy + h, fz)]
+            self.waypoints = [(cx + hn, cy + he, fz), (cx + hn, cy - he, fz),
+                              (cx - hn, cy - he, fz), (cx - hn, cy + he, fz)]
             # Make PX4's own home match ours so its RTL backstop goes to the same spot.
             # param1 = 1 means "use current location".
             self.send_command(VehicleCommand.VEHICLE_CMD_DO_SET_HOME, 1.0)
@@ -305,18 +313,29 @@ class PatrolRtl(Node):
             self.set_state('DONE')
             return
 
-        # Stream setpoints for 1 s before requesting offboard.
-        if self.state_ticks >= RATE_HZ:
+        # Stream setpoints for 1 s before requesting offboard, and give PX4's
+        # estimate time to settle: right after the position source starts it
+        # reports "horizontal position unstable" for a few seconds and arming then
+        # fails (seen with two drones, where drone 0's visual odometry starts later
+        # in its boot). So wait until the position has been valid for 5 s.
+        # (VehicleStatus.pre_flight_checks_pass can't be used: it is for PX4's
+        # current mode, which wants a global position that a GPS-free drone lacks.)
+        if not self.pos_ok():
+            self.pos_ok_since = None
+        elif getattr(self, 'pos_ok_since', None) is None:
+            self.pos_ok_since = self.now_s()
+        settled = self.pos_ok_since is not None and self.now_s() - self.pos_ok_since >= 5.0
+        if self.state_ticks >= RATE_HZ and settled:
             self.set_state('ARMING')
 
     def step_arming(self):
-        """Request offboard mode and arm, retrying once per second up to 5 times."""
+        """Request offboard mode and arm, retrying once per second up to 10 times."""
         if self.armed() and self.in_offboard():
             self.set_state('TAKEOFF')
             return
         # state_ticks % RATE_HZ == 1 fires on the first tick and then once per second.
         if self.state_ticks % RATE_HZ == 1:
-            if self.tries >= 5:
+            if self.tries >= 10:
                 self.get_logger().error(
                     'Could not arm or enter offboard. Check arming checks in QGC.')
                 self.set_state('DONE')

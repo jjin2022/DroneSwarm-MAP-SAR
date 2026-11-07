@@ -13,6 +13,9 @@ The drone's own motion supplies the geometry, as in tools/swarm_uwb_sim.py.
                         when the fix is good. It is in PX4's own (drifting) frame,
                         i.e. relative to where the drone thinks it is, which is what
                         the drone needs to fly there: its own drift cancels out.
+                        With pad_x_m/pad_y_m set (a robot with several pads,
+                        multi-drone), it is that pad instead: the centre plus the
+                        pad's body-frame offset turned by the solved heading.
 
 A fix is published when (a) after dropping NLOS readings (too long: blocked by a
 trunk) the fit residual is small, and (b) the position uncertainty from the fit
@@ -79,12 +82,14 @@ class UwbLocator(Node):
         self.sigma = p('range_noise_m', 0.10).value
         self.max_std = p('max_std_m', 0.3).value
         self.max_rms = p('max_rms_m', 0.25).value
+        # This drone's pad on the robot, body frame (x forward, y left, m).
+        self.pad = (p('pad_x_m', 0.0).value, p('pad_y_m', 0.0).value)
         qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                          history=HistoryPolicy.KEEP_LAST, depth=1)
         self.create_subscription(VehicleLocalPosition, 'fmu/out/vehicle_local_position_v1',
                                  self.on_pos, qos)
-        self.create_subscription(Float32MultiArray, '/uwb/ranges', self.on_ranges, 10)
-        self.pub = self.create_publisher(PointStamped, '/uwb/dock_fix', 10)
+        self.create_subscription(Float32MultiArray, 'uwb/ranges', self.on_ranges, 10)
+        self.pub = self.create_publisher(PointStamped, 'uwb/dock_fix', 10)
         self.pos = None
         self.ground_u = None          # robot ground level, local ENU up
         self.samples = []             # (t, tag_enu (3,), ranges (4,))
@@ -180,7 +185,10 @@ class UwbLocator(Node):
             fix = PointStamped()
             fix.header.stamp = self.get_clock().now().to_msg()
             fix.header.frame_id = 'px4_local_ned'
-            fix.point.x, fix.point.y = float(th[1]), float(th[0])          # NED: north, east
+            c, s = math.cos(th[2]), math.sin(th[2])
+            pe = th[0] + c * self.pad[0] - s * self.pad[1]
+            pn = th[1] + s * self.pad[0] + c * self.pad[1]
+            fix.point.x, fix.point.y = float(pn), float(pe)               # NED: north, east
             fix.point.z = float(-(self.ground_u + PLATFORM_TOP_M))
             self.pub.publish(fix)
         if self.now() - self.last_report > 5.0:

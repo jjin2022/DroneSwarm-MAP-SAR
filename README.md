@@ -190,13 +190,14 @@ funnel dock from `docs/drone-design.md`.
 │   ├── avoid_eval/                 # Measure real clearance to obstacles in a recorded flight
 │   ├── land_eval/                  # Measure landing error against the pad in a recorded flight
 │   ├── sortie_runner/              # Phase 1 exit test: unattended sorties, faults, scoring
+│   ├── multi_drone/                # Two drones from one robot: own strips and pads (Phase 5 groundwork)
 │   ├── drone_budget.py             # Drone mass / power / endurance estimate
 │   └── swarm_uwb_sim.py            # GPS-loss swarm localization check (numpy)
 └── src/
     └── las_offboard/               # ROS 2 Python package (ament_python)
         ├── las_offboard/           # Nodes (see Current State)
         ├── launch/                 # lidar_bridge.launch.py
-        ├── models/                 # robot_dock (B2-class + pad + UWB), x500_lidar_cam_down
+        ├── models/                 # robot_dock (B2-class + pad + UWB), robot_dock_duo (two pads), x500_lidar_cam_down
         ├── rviz/                   # patrol_lidar.rviz
         └── worlds/                 # forest_pillars*, lidar_test; gen_forest.py, random_pad.py
 ```

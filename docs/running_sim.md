@@ -90,6 +90,27 @@ ros2 run las_offboard patrol_rtl --ros-args -r __ns:=/px4_2 -p altitude_m:=8.0
 ```
 The node reads the MAVLink system ID from `VehicleStatus`; pass `-p target_system:=N` to override.
 
+### Two drones from one robot (GPS-free, full stack)
+
+The above is plain `patrol_rtl` with GPS. For two drones running the whole
+GPS-free stack (lidar avoidance, visual odometry, UWB, precision landing) from
+one robot, use the launcher; see [tools/multi_drone/README.md](../tools/multi_drone/README.md):
+
+```bash
+# once: link the two-pad robot and its world into PX4
+ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/models/robot_dock_duo \
+      ~/dev/PX4-Autopilot/Tools/simulation/gz/models/robot_dock_duo
+ln -s ~/dev/DroneSwarm-MAP-SAR/src/las_offboard/worlds/forest_pillars_robot_duo.sdf \
+      ~/dev/PX4-Autopilot/Tools/simulation/gz/worlds/forest_pillars_robot_duo.sdf
+# then (ROS, px4_ws and this workspace sourced)
+python3 tools/multi_drone/run_multi.py            # opens Gazebo to watch
+```
+
+Drone 0 keeps the single-drone topic names; drone 1 runs under `/px4_1` (PX4
+instance 1, `PX4_INSTANCE=1 scripts/px4_nogps.sh`). Per-drone topics such as
+`scan`, `camera/...`, `landing_pad`, `uwb/...` and `sim/ground_truth/odometry`
+are relative, so a node's namespace applies to them.
+
 ## 4. LIDAR (x500 with 2D lidar)
 
 One-time setup:

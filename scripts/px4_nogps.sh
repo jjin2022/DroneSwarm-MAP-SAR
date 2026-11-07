@@ -11,6 +11,12 @@
 #   parameter folder, never in your normal parameters).
 #   PX4_DAEMON=1 (environment): run without the pxh> console, e.g. from a script
 #   with no terminal (tools/sortie_runner).
+#   PX4_INSTANCE=<i> (environment, default 0): a second (third...) drone in the
+#   same Gazebo world (tools/multi_drone). PX4 instance i publishes under
+#   /px4_<i>/fmu/..., has MAVLink system id i+1 (offboard port 14540+i), spawns
+#   model x500_lidar_cam_down_<i>, and runs in its own folder rootfs_nogps_<i>.
+#   Its model is a copy whose true-pose topic is /px4_<i>/sim/ground_truth/odometry,
+#   so the drones' sim_vio feeds don't mix (the plugin's topic is fixed in the SDF).
 #
 # Run it in the PX4 terminal, after Gazebo is up (see docs/running_sim.md,
 # "Flying without GPS"). It:
@@ -38,11 +44,27 @@ case $MODE in
 esac
 PX4_DIR=${PX4_DIR:-$HOME/dev/PX4-Autopilot}
 BUILD=$PX4_DIR/build/px4_sitl_default
+INSTANCE=${PX4_INSTANCE:-0}
 RUN_DIR=$BUILD/rootfs_nogps
+[ "$INSTANCE" = 0 ] || RUN_DIR=$BUILD/rootfs_nogps_$INSTANCE
 
 [ -x "$BUILD/bin/px4" ] || { echo "PX4 not built: $BUILD/bin/px4"; exit 1; }
 mkdir -p "$RUN_DIR"
 cp "$BUILD/rootfs/gz_env.sh" "$RUN_DIR/"
+if [ "$INSTANCE" != 0 ]; then
+    # This instance's model: the normal one with its true-pose topics namespaced.
+    # PX4 spawns $PX4_GZ_MODELS/<model>/model.sdf, so point that at a folder of our own.
+    SRC_MODEL=$(realpath "$PX4_DIR/Tools/simulation/gz/models/x500_lidar_cam_down")
+    mkdir -p "$RUN_DIR/models/x500_lidar_cam_down"
+    sed "s#<odom_topic>/sim/#<odom_topic>/px4_$INSTANCE/sim/#; s#<odom_covariance_topic>/sim/#<odom_covariance_topic>/px4_$INSTANCE/sim/#" \
+        "$SRC_MODEL/model.sdf" > "$RUN_DIR/models/x500_lidar_cam_down/model.sdf"
+    cp "$SRC_MODEL/model.config" "$RUN_DIR/models/x500_lidar_cam_down/"
+    grep -q "/px4_$INSTANCE/sim/ground_truth/odometry<" "$RUN_DIR/models/x500_lidar_cam_down/model.sdf" ||
+        { echo "could not namespace the model's true-pose topic"; exit 1; }
+    # Standalone PX4 never reads gz_env.sh: it spawns file://$PX4_GZ_MODELS/<model>,
+    # and with that unset Gazebo finds the model by name (the original). Set it here.
+    export PX4_GZ_MODELS=$RUN_DIR/models
+fi
 if [ -f "$BUILD/rootfs/parameters.bson" ]; then      # start from your normal settings
     cp "$BUILD/rootfs/parameters.bson" "$RUN_DIR/parameters.bson"
     cp "$BUILD/rootfs/parameters.bson" "$RUN_DIR/parameters_backup.bson"
@@ -56,7 +78,7 @@ unset GZ_CONFIG_PATH
 
 cd "$RUN_DIR"
 SOURCES="visual odometry"; [ "$GPS_CTRL" = 7 ] && SOURCES="visual odometry + GPS"
-echo "PX4 on $SOURCES in $RUN_DIR (world $WORLD${POSE:+, spawn at $POSE}); your normal parameters are only read."
+echo "PX4 instance $INSTANCE on $SOURCES in $RUN_DIR (world $WORLD${POSE:+, spawn at $POSE}); your normal parameters are only read."
 if [ -n "$POSE" ]; then export PX4_GZ_MODEL_POSE="$POSE"; else unset PX4_GZ_MODEL_POSE; fi
 # -w + the etc folder: without them PX4 ignores the current folder and uses rootfs/.
 # Height from the barometer in both modes, so losing GPS doesn't move it.
@@ -64,4 +86,4 @@ exec env PX4_PARAM_EKF2_GPS_CTRL=$GPS_CTRL PX4_PARAM_EKF2_EV_CTRL=5 PX4_PARAM_EK
     PX4_PARAM_SIM_GPS_USED=10 \
     PX4_SYS_AUTOSTART=4013 PX4_SIM_MODEL=gz_x500_lidar_cam_down \
     PX4_GZ_STANDALONE=1 PX4_GZ_WORLD="$WORLD" \
-    "$BUILD/bin/px4" ${PX4_DAEMON:+-d} -w "$RUN_DIR" "$BUILD/etc"
+    "$BUILD/bin/px4" ${PX4_DAEMON:+-d} -i "$INSTANCE" -w "$RUN_DIR" "$BUILD/etc"

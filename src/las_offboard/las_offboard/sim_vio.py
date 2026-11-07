@@ -82,9 +82,9 @@ class SimVio(Node):
         px4_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              history=HistoryPolicy.KEEP_LAST, depth=1)
-        self.create_subscription(Odometry, '/sim/ground_truth/odometry', self.on_truth, 10)
+        self.create_subscription(Odometry, 'sim/ground_truth/odometry', self.on_truth, 10)
         self.pub = self.create_publisher(VehicleOdometry, 'fmu/in/vehicle_visual_odometry', px4_qos)
-        self.drift_pub = self.create_publisher(PointStamped, '/sim_vio/drift', 10)
+        self.drift_pub = self.create_publisher(PointStamped, 'sim_vio/drift', 10)
 
         self.origin = None                  # true position at start (NED): VIO starts at 0
         self.last = None                    # last true position, for distance flown

@@ -416,7 +416,7 @@ class PatrolLidar(PatrolRtl):
         super().__init__('patrol_lidar')
 
         p = self.declare_parameter
-        scan_topic = p('scan_topic', '/scan').value
+        scan_topic = p('scan_topic', 'scan').value
         att_topic = p('attitude_topic', 'fmu/out/vehicle_attitude').value
         self.speed = p('cruise_speed_m_s', 2.0).value          # approximate
         self.radius = p('avoid_radius_m', 0.8).value           # clearance each side
@@ -433,7 +433,7 @@ class PatrolLidar(PatrolRtl):
         self.tracker = ObjectTracer()
         # Precision landing on the pad seen by pad_detector (/landing_pad).
         self.precision = p('precision_landing', True).value
-        pad_topic = p('pad_topic', '/landing_pad').value
+        pad_topic = p('pad_topic', 'landing_pad').value
         self.land_rate = p('land_descent_rate_m_s', 0.3).value
         self.land_align = p('land_align_tolerance_m', 0.15).value
         self.land_handoff = p('land_handoff_height_m', 0.6).value   # then PX4 lands
@@ -458,7 +458,7 @@ class PatrolLidar(PatrolRtl):
         # the take-off point) > last known report > the dock_e/dock_n setting.
         # (GPS slots in after radio: Phase 1 step 6.)
         dock_topic = p('dock_topic', '/robot/dock_position').value
-        uwb_topic = p('uwb_topic', '/uwb/dock_fix').value
+        uwb_topic = p('uwb_topic', 'uwb/dock_fix').value
         self.radio_timeout = p('radio_timeout_s', 3.0).value
         self.uwb_timeout = p('uwb_timeout_s', 3.0).value
 

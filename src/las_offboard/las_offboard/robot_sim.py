@@ -15,10 +15,17 @@ This node does the simulator version:
   - Optional bad-odometry fault: odometry_bias_m adds a fixed error of that size to
     the report once the robot has moved (the drone's UWB fix should catch it).
   - The robot faces a random direction after moving (the UWB anchors turn with it).
+  - Several pads (multi-drone, robot_dock_duo): pads:=[x0, y0, x1, y1, ...] gives
+    each pad's offset in the robot's body frame (x forward, y left, m). Pad i is
+    reported on its own topic, relative to where ITS drone took off (that pad's
+    start position), turned with the robot's heading. Default: one pad at the
+    centre, i.e. the single-drone behaviour.
 
   Out:  /robot/dock_position      geometry_msgs/PointStamped, frame "takeoff_ned":
                                   x north, y east (m) of the dock from where the drone
                                   took off. What the drone is allowed to use.
+                                  Pad i > 0: /robot/dock_position_<i>, same frame
+                                  convention (from pad i's start).
         /sim/ground_truth/robot   geometry_msgs/PoseStamped, frame "world" (ENU):
                                   the robot's true pose, for uwb_sim and test tools
                                   only (never for the drone).
@@ -66,6 +73,10 @@ class RobotSim(Node):
         self.min_move = p('min_move_m', 2.0).value
         self.bias = p('odometry_bias_m', 0.0).value
         seed = p('seed', 0).value
+        pads = list(p('pads', [0.0, 0.0]).value)
+        if len(pads) < 2 or len(pads) % 2:
+            raise SystemExit('pads must be [x0, y0, x1, y1, ...] (body frame, m)')
+        self.pads = [(pads[i], pads[i + 1]) for i in range(0, len(pads), 2)]
         self.rng = random.Random(seed or None)
 
         if not self.world_file:
@@ -77,7 +88,9 @@ class RobotSim(Node):
         qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
                          history=HistoryPolicy.KEEP_LAST, depth=1)
         self.create_subscription(VehicleStatus, 'fmu/out/vehicle_status_v1', self.on_status, qos)
-        self.report_pub = self.create_publisher(PointStamped, '/robot/dock_position', 10)
+        self.report_pubs = [self.create_publisher(
+            PointStamped, '/robot/dock_position' + (f'_{i}' if i else ''), 10)
+            for i in range(len(self.pads))]
         self.truth_pub = self.create_publisher(PoseStamped, '/sim/ground_truth/robot', 10)
 
         self.pos = self.start          # true position, world ENU
@@ -154,13 +167,17 @@ class RobotSim(Node):
         if t is not None and 0 <= self.radio_silent_after <= t:
             self.get_logger().warn('Radio silent (fault injected)', throttle_duration_sec=10.0)
             return
-        # What the robot believes: its odometry since take-off, error included.
-        de = self.pos[0] - self.start[0] + self.err[0]
-        dn = self.pos[1] - self.start[1] + self.err[1]
-        rep = PointStamped()
-        rep.header.stamp, rep.header.frame_id = stamp, 'takeoff_ned'
-        rep.point.x, rep.point.y = float(dn), float(de)       # NED: x north, y east
-        self.report_pub.publish(rep)
+        # What the robot believes: its odometry since take-off, error included (its
+        # heading is taken as known: a legged robot's IMU yaw drifts far less).
+        for (px, py), pub in zip(self.pads, self.report_pubs):
+            c, s = math.cos(self.yaw), math.sin(self.yaw)
+            # Pad i now, minus pad i at the start (robot at start, heading 0).
+            de = self.pos[0] + c * px - s * py - (self.start[0] + px) + self.err[0]
+            dn = self.pos[1] + s * px + c * py - (self.start[1] + py) + self.err[1]
+            rep = PointStamped()
+            rep.header.stamp, rep.header.frame_id = stamp, 'takeoff_ned'
+            rep.point.x, rep.point.y = float(dn), float(de)       # NED: x north, y east
+            pub.publish(rep)
 
 
 def main(args=None):
