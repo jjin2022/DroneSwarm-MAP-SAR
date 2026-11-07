@@ -771,8 +771,40 @@ class PatrolLidar(PatrolRtl):
         v_ok = a * (np.sqrt(t * t + 2.0 * room / a) - t)          # max closing speed
         return float(min(step, np.min(v_ok / cos[ahead])))
 
-    def setpoint_toward(self, pe, pn, heading, step, z, face=True):
-        e, n = pe + step * math.cos(heading), pn + step * math.sin(heading)
+    def brake_drift(self, rel, de, dn):
+        """Correct the setpoint offset (de, dn) (~commanded velocity, gain ~1/s) for
+        the drone's ACTUAL motion toward obstacles.
+
+        closing_limit only caps the commanded direction. While steering round one
+        post the drone still carries its old velocity, and that drift can close on
+        another trunk faster than it can stop: sortie 26 of the confirmation run
+        reached 0.35 m closing at 0.55 m/s from 0.7 m, 50 deg off the heading. For
+        the point where the real closing speed exceeds the stopping limit most,
+        command a closing speed below that limit by the excess, so PX4 brakes the
+        drift instead of only the planned motion.
+        """
+        vn, ve = float(self.pos.vx), float(self.pos.vy)          # NED -> ENU
+        if not len(rel) or not (math.isfinite(ve) and math.isfinite(vn)):
+            return de, dn
+        r = np.maximum(np.hypot(rel[:, 0], rel[:, 1]), 1e-6)
+        u = rel / r[:, None]
+        closing = u[:, 0] * ve + u[:, 1] * vn
+        a, t = self.brake_accel, self.brake_latency
+        room = np.maximum(r - self.stop_margin, 0.0)
+        v_ok = a * (np.sqrt(t * t + 2.0 * room / a) - t)
+        excess = closing - v_ok
+        k = int(np.argmax(excess))
+        if excess[k] <= 0.0:
+            return de, dn
+        cmd = de * u[k, 0] + dn * u[k, 1]
+        want = min(cmd, v_ok[k]) - excess[k]
+        return de + (want - cmd) * u[k, 0], dn + (want - cmd) * u[k, 1]
+
+    def setpoint_toward(self, pe, pn, heading, step, z, face=True, rel=None):
+        de, dn = step * math.cos(heading), step * math.sin(heading)
+        if rel is not None:
+            de, dn = self.brake_drift(rel, de, dn)
+        e, n = pe + de, pn + dn
         if face and self.face_travel and step > 0.2:
             self.yaw_sp = math.atan2(math.cos(heading), math.sin(heading))   # NED yaw from ENU heading
         x, y = self.ned(e, n)
@@ -837,7 +869,7 @@ class PatrolLidar(PatrolRtl):
             return (self.pos.x, self.pos.y, z)
         if len(rel):
             step = self.closing_limit(rel, heading, step)
-        return self.setpoint_toward(pe, pn, heading, step, z)
+        return self.setpoint_toward(pe, pn, heading, step, z, rel=rel if len(rel) else None)
 
     def escape(self, pe, pn, heading, z, rel=None):
         """Back away 0.5 m along heading, but turn to face it first if it's outside
@@ -849,7 +881,7 @@ class PatrolLidar(PatrolRtl):
             self.yaw_sp = math.atan2(math.cos(heading), math.sin(heading))   # NED yaw
             return (self.pos.x, self.pos.y, z)
         step = 0.5 if rel is None else self.closing_limit(rel, heading, 0.5)
-        return self.setpoint_toward(pe, pn, heading, step, z)
+        return self.setpoint_toward(pe, pn, heading, step, z, rel=rel)
 
     def facing(self, heading, limit_deg=100.0):
         """True if ENU heading is within limit_deg of the drone's nose (lidar sees +-135)."""
