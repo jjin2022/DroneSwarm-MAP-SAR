@@ -424,6 +424,10 @@ class PatrolLidar(PatrolRtl):
         self.stuck_timeout = p('stuck_timeout_s', 15.0).value
         self.min_obs_h = p('min_obstacle_height_m', 0.15).value   # lower hits = ground
         self.face_travel = p('face_travel_direction', True).value
+        # Stopping-distance limit toward obstacles (see closing_limit).
+        self.brake_accel = p('brake_accel_m_s2', 1.0).value      # PX4 braking seen in sim
+        self.brake_latency = p('brake_latency_s', 0.3).value     # tick + PX4 response
+        self.stop_margin = p('stop_margin_m', 0.5).value         # prop tips ~0.38 m
         self.map_dir = p('map_dir', '.').value                 # '' = don't save
         self.map = OccupancyMap(p('map_size_m', 40.0).value, p('map_resolution_m', 0.1).value)
         self.tracker = ObjectTracer()
@@ -744,6 +748,29 @@ class PatrolLidar(PatrolRtl):
             self.avoid_side = 1 if off > 0 else -1
         return float(th[free[0]]), off
 
+    def closing_limit(self, rel, heading, step):
+        """Cap step (~speed, PX4's position gain is ~1/s) so the drone can always
+        stop before stop_margin_m from anything ahead of it.
+
+        Only the speed TOWARD each obstacle point is limited: for a point r away at
+        angle a off the heading, v cos(a) must satisfy v t + v^2 / 2A <= r - margin
+        (t = brake_latency_s, A = brake_accel_m_s2). Moving sideways or away stays
+        free. The old cap never went below 0.5 m/s, and PX4 brakes at only ~1 m/s^2:
+        both Phase 1 run-2 trunk contacts (0.37 m, 0.24 m) were the drone still
+        closing at 0.7-1 m/s on a trunk it could see, from ~1 m out.
+        """
+        if not len(rel):
+            return step
+        r = np.hypot(rel[:, 0], rel[:, 1])
+        cos = (rel[:, 0] * math.cos(heading) + rel[:, 1] * math.sin(heading)) / np.maximum(r, 1e-6)
+        ahead = cos > 0.05
+        if not ahead.any():
+            return step
+        a, t = self.brake_accel, self.brake_latency
+        room = np.maximum(r[ahead] - self.stop_margin, 0.0)
+        v_ok = a * (np.sqrt(t * t + 2.0 * room / a) - t)          # max closing speed
+        return float(min(step, np.min(v_ok / cos[ahead])))
+
     def setpoint_toward(self, pe, pn, heading, step, z, face=True):
         e, n = pe + step * math.cos(heading), pn + step * math.sin(heading)
         if face and self.face_travel and step > 0.2:
@@ -780,7 +807,7 @@ class PatrolLidar(PatrolRtl):
                 self.get_logger().warn(f'Obstacle {ranges[k]:.2f} m away, backing off',
                                        throttle_duration_sec=2.0)
                 away = math.atan2(-rel[k, 1], -rel[k, 0])
-                return self.escape(pe, pn, away, z)
+                return self.escape(pe, pn, away, z, rel)
             heading, off = self.free_heading(heading, rel, min(self.lookahead, dist))
             if heading is None:
                 # No clear heading: back away from everything nearby (closest
@@ -791,7 +818,7 @@ class PatrolLidar(PatrolRtl):
                                        throttle_duration_sec=2.0)
                 if np.hypot(*push) < 1e-6:
                     return (self.pos.x, self.pos.y, z)
-                return self.escape(pe, pn, math.atan2(push[1], push[0]), z)
+                return self.escape(pe, pn, math.atan2(push[1], push[0]), z, rel)
             if off and not self.avoiding:
                 self.get_logger().info(
                     f'Obstacle ahead: steering {abs(off):.0f} deg {"left" if off > 0 else "right"}')
@@ -808,9 +835,11 @@ class PatrolLidar(PatrolRtl):
         if self.face_travel and not self.facing(heading):
             self.yaw_sp = math.atan2(math.cos(heading), math.sin(heading))   # NED yaw
             return (self.pos.x, self.pos.y, z)
+        if len(rel):
+            step = self.closing_limit(rel, heading, step)
         return self.setpoint_toward(pe, pn, heading, step, z)
 
-    def escape(self, pe, pn, heading, z):
+    def escape(self, pe, pn, heading, z, rel=None):
         """Back away 0.5 m along heading, but turn to face it first if it's outside
         what the lidar sees. Escapes used to move without turning, i.e. often straight
         backwards into the blind rear sector, and one backed into a thin trunk (0.28 m,
@@ -819,7 +848,8 @@ class PatrolLidar(PatrolRtl):
         if self.face_travel and not self.facing(heading):
             self.yaw_sp = math.atan2(math.cos(heading), math.sin(heading))   # NED yaw
             return (self.pos.x, self.pos.y, z)
-        return self.setpoint_toward(pe, pn, heading, 0.5, z)
+        step = 0.5 if rel is None else self.closing_limit(rel, heading, 0.5)
+        return self.setpoint_toward(pe, pn, heading, step, z)
 
     def facing(self, heading, limit_deg=100.0):
         """True if ENU heading is within limit_deg of the drone's nose (lidar sees +-135)."""
